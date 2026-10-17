@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { setSearch, useSearch } from '../../router'
 import { analyse } from '../domain/analysis'
 import { compareDesigns } from '../domain/compare'
-import { breakConditions, breakMyDesign } from '../domain/sims'
+import { breakConditions, breakMyDesign, SIM_MODEL_VERSION } from '../domain/sims'
 import type { DesignVersion, Project } from '../domain/types'
 import { useStudio } from '../store'
 import { Contents, PackageModel, S } from '../three/PackageModel'
@@ -40,10 +40,11 @@ export default function CompareView({ project }: { project: Project }) {
   const result = useMemo(() => {
     const aa = analyse(A.params, project.brief, project.assumptions)
     const ab = analyse(B.params, project.brief, project.assumptions)
-    // Identical, fixed conditions for both (taken from version A's context so the stack height matches).
-    const ra = breakMyDesign(aa.ctx)
-    const rb = breakMyDesign(ab.ctx)
-    return { cmp: compareDesigns(A.params, aa, ra, B.params, ab, rb), cond: breakConditions(aa.ctx) }
+    // One set of conditions for both designs, so the comparison is like for like.
+    const cond = breakConditions(aa.ctx)
+    const ra = breakMyDesign(aa.ctx, cond)
+    const rb = breakMyDesign(ab.ctx, cond)
+    return { cmp: compareDesigns(A.params, aa, ra, B.params, ab, rb), cond }
   }, [A, B, project.brief, project.assumptions])
 
   if (project.versions.length < 2)
@@ -113,7 +114,7 @@ export default function CompareView({ project }: { project: Project }) {
               <Scale size={16} aria-hidden /> Side by side, same conditions
             </h2>
             <p className="mt-0.5 text-[12px] text-ink-3">
-              Tests: {cond.drop.heightCm} cm {cond.drop.orientation} drop · stack of {cond.stack.layers} with {cond.stack.offsetMm} mm offset · rough road. All values are estimates from the simplified models.
+              Tests: {cond.drop.heightCm} cm {cond.drop.orientation} drop · stack of {cond.stack.layers} with {cond.stack.offsetMm} mm offset · rough road. Computed now from the current brief and these two versions (model {SIM_MODEL_VERSION}); all values are estimates from the simplified models.
             </p>
             <table className="mt-2 w-full text-[13px]">
               <thead>

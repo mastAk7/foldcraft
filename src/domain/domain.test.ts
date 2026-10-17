@@ -7,7 +7,7 @@ import { buildManualRecord, validateManual } from './manual'
 import { vitality } from './progression'
 import { buildQrPayload, parseQrPayload } from './qr'
 import { currentRecommendation, storageStatus, zoneForItem } from './storage'
-import { deriveItemTasks, visibleTasks } from './tasks'
+import { canDismiss, deriveItemTasks, taskActions, visibleTasks } from './tasks'
 import type { ConsumerItem, LifecycleEvent } from './types'
 
 const TODAY = '2026-10-17'
@@ -92,6 +92,35 @@ describe('tasks', () => {
     expect(zoneForItem(p)).toBe('workshop')
     const done = { ...p, packaging: { jar: 'reused' as const, lid: 'recycled' as const } }
     expect(needsPackagingAction(done)).toBe(false)
+  })
+  it('date reminders lead to checking the item, never straight to marking it used up', () => {
+    const yog = item('greek-yoghurt-jar', { actual: 'refrigerator' })
+    const dated = deriveItemTasks(yog, TODAY).filter((t) => t.type === 'date_check')
+    expect(dated.length).toBeGreaterThan(0)
+    for (const t of dated) {
+      const acts = taskActions(t)
+      expect(acts[0]).toBe('view')
+      expect(acts).toContain('snooze')
+      expect(acts.indexOf('confirm_used')).toBeGreaterThan(0)
+      expect(t.source).toBeTruthy()
+      expect(t.reason).toMatch(/can’t tell Foldcraft how the product is now/)
+      expect(`${t.title} ${t.reason}`).not.toMatch(/expired|spoil|unsafe|gone off|gone bad|is bad/i)
+    }
+  })
+  it('use-by reminders can be snoozed but not dismissed; best-before can be dismissed', () => {
+    const base = { id: 'x', coach: 'storage' as const, itemId: 'i', priority: 80, title: '', reason: '', source: '' }
+    expect(canDismiss({ ...base, type: 'date_check', dateKind: 'use_by' })).toBe(false)
+    expect(taskActions({ ...base, type: 'date_check', dateKind: 'use_by' })).not.toContain('dismiss')
+    expect(canDismiss({ ...base, type: 'date_check', dateKind: 'best_before' })).toBe(true)
+    expect(canDismiss({ ...base, type: 'storage_mismatch' })).toBe(false)
+  })
+  it('deriving or listing tasks never changes an item', () => {
+    const yog = item('greek-yoghurt-jar', { actual: 'refrigerator' })
+    const before = JSON.stringify(yog)
+    visibleTasks([yog], TODAY)
+    deriveItemTasks(yog, '2027-01-01')
+    expect(JSON.stringify(yog)).toBe(before)
+    expect(yog.status).toBe('unopened')
   })
   it('uses an explicit unknown component when packaging is not described', () => {
     const comps = packagingComponents(item('farmhouse-jam'))

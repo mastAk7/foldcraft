@@ -19,7 +19,7 @@ export const COACH_META: Record<CoachKind, { name: string; accent: string; Icon:
     accent: '#c4613b',
     Icon: Recycle,
     intro: 'When something is used up, helps you decide what happens to each part of its packaging.',
-    empty: 'No packaging waiting. Mark an item “Used it up” and its packaging will show up here.',
+    empty: 'No packaging waiting. When you finish something, open it and choose “Used it up”; its packaging then shows up here.',
   },
 }
 

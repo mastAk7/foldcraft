@@ -8,6 +8,7 @@ import { validateParams } from './domain/params'
 import { deriveRecord, fingerprint, passportSummary } from './domain/passport'
 import { currentVersion, emptyBrief, briefFor, generateParams, makeVersion, uid } from './domain/project'
 import { sampleProjects } from './domain/seed'
+import { addRun, isRunRecord, type RunRecord } from './domain/runs'
 import { breakMyDesign } from './domain/sims'
 import type { AssumptionOverrides, Batch, BriefStage, DesignParams, MaterialId, ParamChange, ProduceKind, ProductBrief, Project, VersionSource } from './domain/types'
 
@@ -36,6 +37,8 @@ interface Actions {
   commitVersion(id: string, params: DesignParams, label: string, source: VersionSource, changeLog: ParamChange[]): string | null
   setCurrentVersion(id: string, versionId: string): void
   markTested(id: string, versionId: string): void
+  /** Store a completed lab run (with its inputs) and mark its version tested. */
+  recordRun(id: string, run: RunRecord): void
   setFinal(id: string, versionId: string, final: boolean): void
   setAssumption(id: string, material: MaterialId, key: 'pricePerKg' | 'convertingPerPack', value: number | undefined): void
   publish(id: string, batch: Omit<Batch, 'id' | 'recordVersion' | 'createdAt' | 'designVersionId'>): { ok: true; recordVersion: number } | { ok: false; reason: string }
@@ -82,6 +85,7 @@ export function sanitizeStudio(raw: unknown): Persisted {
         ...p,
         versions: p.versions.filter((v) => isObj(v) && isObj(v.params) && validateParams(v.params).length === 0),
         testedVersionIds: Array.isArray(p.testedVersionIds) ? p.testedVersionIds : [],
+        runs: Array.isArray(p.runs) ? p.runs.filter(isRunRecord) : [],
         batches: Array.isArray(p.batches) ? p.batches : [],
         assumptions: isObj(p.assumptions) ? p.assumptions : {},
       }))
@@ -181,6 +185,10 @@ export const useStudio = create<StudioState>()(
 
         markTested(id, versionId) {
           update(id, (p) => (p.testedVersionIds.includes(versionId) ? p : touch(p, { testedVersionIds: [...p.testedVersionIds, versionId] })))
+        },
+
+        recordRun(id, run) {
+          update(id, (p) => touch(p, { runs: addRun(p.runs, run), testedVersionIds: p.testedVersionIds.includes(run.versionId) ? p.testedVersionIds : [...p.testedVersionIds, run.versionId] }))
         },
 
         setFinal(id, versionId, final) {

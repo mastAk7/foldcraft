@@ -162,4 +162,6 @@ export interface Task {
   title: string
   reason: string
   source: string
+  /** For date tasks: which printed date this is about. */
+  dateKind?: DateKind
 }

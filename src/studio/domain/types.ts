@@ -8,6 +8,7 @@
  *  - Estimates and simulation results are derived from parameters and never stored as facts.
  */
 import type { DateKind, ProductDate, ProductRecord, StorageKind } from '../../domain/types'
+import type { RunRecord } from './runs'
 
 export type Vec3 = [number, number, number]
 export interface Dims {
@@ -354,15 +355,23 @@ export interface DropTrace {
   y: number[]
   /** product displacement relative to package along impact axis, mm (positive = towards impact face) */
   rel: number[]
+  /** package deceleration from floor contact, g */
+  acc: number[]
+  /** unit contact at this sample: 0 none, 1 pressed on its support, 2 against the lid */
+  contact: number[]
   impactIndex: number
 }
 
 export interface VibrationTrace {
   t: number[]
+  /** vertical and lateral base (deck) displacement, mm */
   base: number[]
+  baseLat: number[]
   /** product relative x and y (mm) inside its cell */
   px: number[]
   py: number[]
+  /** contacts since the previous sample, bit mask: 1 wall (+x), 2 wall (−x), 4 lid, 8 airborne */
+  contact: number[]
 }
 
 /* ------------------------------------------------------------------ project */
@@ -399,6 +408,8 @@ export interface Project {
   currentVersionId?: string
   /** Version ids that have been through the simulation lab (any test). */
   testedVersionIds: string[]
+  /** Completed Simulation Lab runs with their exact inputs (newest first, capped). */
+  runs?: RunRecord[]
   batches: Batch[]
   assumptions: AssumptionOverrides
   published?: PublishedRef

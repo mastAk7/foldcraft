@@ -2,7 +2,7 @@ import { X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { currentRecommendation, LOCATION_LABEL, suggestedLocation } from '../domain/storage'
-import { visibleTasks } from '../domain/tasks'
+import { taskActions, visibleTasks } from '../domain/tasks'
 import { useWorld } from '../services/store'
 import { CoachAvatar, COACH_META } from './CoachPanel'
 
@@ -19,6 +19,9 @@ export function CoachPrompt({ compact = false }: { compact?: boolean }) {
   const show = !!task && !!item && !panel && !selectedId
 
   const rec = item ? currentRecommendation(item) : null
+  const primary = task ? taskActions(task)[0] : null
+  const primaryLabel =
+    primary === 'record_packaging' ? 'Record packaging' : primary === 'pick_location' ? 'Record where it is' : task && (task.type === 'date_check' || task.type === 'opened_window') ? 'Check item & label' : 'Open item'
 
   return (
     <AnimatePresence>
@@ -51,13 +54,13 @@ export function CoachPrompt({ compact = false }: { compact?: boolean }) {
             </button>
           </div>
           <div className={`flex flex-wrap gap-1.5 pl-[42px] ${compact ? 'mt-1.5' : 'mt-2.5'}`}>
-            {task.type === 'storage_mismatch' && rec ? (
+            {primary === 'move' && rec ? (
               <button type="button" className="btn btn-sm btn-frost" onClick={() => moveItem(item.id, suggestedLocation(rec.kind))}>
                 Moved it to {LOCATION_LABEL[suggestedLocation(rec.kind)].toLowerCase()}
               </button>
             ) : (
               <button type="button" className={`btn btn-sm ${task.coach === 'storage' ? 'btn-frost' : 'btn-clay'}`} onClick={() => select(item.id)}>
-                {task.type === 'packaging_next' ? 'Record packaging' : 'Open item'}
+                {primaryLabel}
               </button>
             )}
             <button type="button" className="btn btn-sm" onClick={() => openPanel('coach', task.coach)}>

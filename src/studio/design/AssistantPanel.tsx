@@ -102,6 +102,25 @@ export function AssistantPanel({ project, params }: { project: Project; params: 
                   {m.reply.kind === 'change' && (
                     <>
                       <ChangeTable changes={m.reply.changes} />
+                      <table className="mt-2 w-full text-[12px]" aria-label="Estimated effect of this change">
+                        <thead>
+                          <tr className="text-left text-ink-3">
+                            <th className="py-0.5 font-semibold">Estimated effect</th>
+                            <th className="py-0.5 font-semibold">Now</th>
+                            <th className="py-0.5 font-semibold">{m.state === 'pending' ? 'If accepted' : 'Proposed'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {m.reply.impact.map((r) => (
+                            <tr key={r.label} className="border-t border-line">
+                              <td className="py-1 pr-2 text-ink-2">{r.label}</td>
+                              <td className="py-1 pr-2 tabular-nums">{r.before}</td>
+                              <td className={`py-1 tabular-nums ${r.before !== r.after ? 'font-semibold' : ''}`}>{r.after}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="mt-1 text-[11px] text-ink-3">Estimates only. Drop, stack and vibration risk need a Simulation Lab run after accepting.</p>
                       {m.reply.warnings.map((w) => (
                         <p key={w} className="mt-1.5 text-[12px] text-amber">
                           {w}
@@ -151,7 +170,21 @@ export function AssistantPanel({ project, params }: { project: Project; params: 
                       </tbody>
                     </table>
                   )}
-                  {m.reply.kind === 'unsupported' && <p className="mt-1 text-[12px] text-ink-3">Try one of the example requests above.</p>}
+                  {m.reply.kind === 'unsupported' &&
+                    (m.reply.related?.length ? (
+                      <div className="mt-1.5">
+                        <p className="text-[12px] text-ink-3">Supported requests that may be close:</p>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {m.reply.related.map((e) => (
+                            <button key={e} type="button" className="chip border-line bg-white text-ink-2 hover:bg-moss-2" onClick={() => ask(e)}>
+                              {e}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-[12px] text-ink-3">Try one of the example requests above.</p>
+                    ))}
                 </div>
               </div>
             </div>

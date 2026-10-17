@@ -1,3 +1,4 @@
+import { analyse } from './analysis'
 import { estimateCost } from './cost'
 import { MATERIALS, TEMPLATE_MATERIALS } from './materials'
 import { applyPatch, BOUNDS, validateParams, wallBound } from './params'
@@ -12,10 +13,17 @@ import type { AssumptionOverrides, DesignParams, MaterialId, ParamChange, Produc
  * honest "not supported" with examples.
  */
 
+/** Before → after estimates for a proposed change, shown before the producer accepts it. */
+export interface ImpactRow {
+  label: string
+  before: string
+  after: string
+}
+
 export type AssistantReply =
-  | { kind: 'change'; intent: string; summary: string; changes: ParamChange[]; params: DesignParams; warnings: string[] }
+  | { kind: 'change'; intent: string; summary: string; changes: ParamChange[]; params: DesignParams; warnings: string[]; impact: ImpactRow[] }
   | { kind: 'info'; intent: string; summary: string; table: { label: string; a: string; b: string }[]; headers: [string, string] }
-  | { kind: 'unsupported'; summary: string }
+  | { kind: 'unsupported'; summary: string; related?: string[] }
 
 export const EXAMPLES = [
   'Add more ventilation holes',
@@ -93,8 +101,41 @@ function propose(ctx: Ctx, intent: string, summary: string, patch: Partial<Recor
   }
   const changes = diff(ctx.params, next, reasons, summary)
   if (!changes.length) return { kind: 'unsupported', summary: `No change needed: ${summary.charAt(0).toLowerCase()}${summary.slice(1)} is already the case, or the parameter is at its limit.` }
-  return { kind: 'change', intent, summary, changes, params: next, warnings }
+  return { kind: 'change', intent, summary, changes, params: next, warnings, impact: impactOf(ctx, next) }
 }
+
+export function impactOf(ctx: Ctx, next: DesignParams): ImpactRow[] {
+  const a = analyse(ctx.params, ctx.brief, ctx.assumptions)
+  const b = analyse(next, ctx.brief, ctx.assumptions)
+  const fit = (x: typeof a) => (x.pkg.arrangement.fits ? `fits, ${x.pkg.arrangement.voidPct.toFixed(0)}% void` : 'does not fit')
+  return [
+    { label: 'Material per pack', before: `${a.cost.massG.toFixed(1)} g`, after: `${b.cost.massG.toFixed(1)} g` },
+    { label: 'Cost per pack (indicative)', before: `€${a.cost.perPack.toFixed(3)}`, after: `€${b.cost.perPack.toFixed(3)}` },
+    { label: 'Stack capacity (dry, est.)', before: `${stackCapacityN(ctx.params).capacity.toFixed(0)} N`, after: `${stackCapacityN(next).capacity.toFixed(0)} N` },
+    { label: 'Contents', before: fit(a), after: fit(b) },
+  ]
+}
+
+const STOP = new Set(['the', 'a', 'an', 'to', 'it', 'of', 'for', 'with', 'make', 'more', 'add', 'and', 'my', 'this', 'please', 'can', 'you'])
+const words = (t: string) => t.toLowerCase().match(/[a-z]+/g)?.filter((w) => w.length > 2 && !STOP.has(w)) ?? []
+
+/** Up to three supported example requests that share words with what was typed. */
+export function relatedExamples(text: string): string[] {
+  const asked = words(text)
+  const scored = EXAMPLES.map((e) => ({ e, n: words(e).filter((w) => asked.some((a) => a.startsWith(w.slice(0, 4)) || w.startsWith(a.slice(0, 4)))).length }))
+  const hits = scored.filter((x) => x.n > 0).sort((x, y) => y.n - x.n)
+  return (hits.length ? hits : scored).slice(0, 3).map((x) => x.e)
+}
+
+/** Topics the studio does not analyse at all, with what it can offer instead. */
+const OUT_OF_SCOPE: [RegExp, string][] = [
+  [/shelf.?life|freshness|spoil|ripen/, 'Shelf life and freshness are not modelled. The studio estimates packaging fit, material, cost and simplified mechanical risk only.'],
+  [/respirat|humidity|condensation|temperature|thermal|atmosphere|\bmap\b/, 'Respiration, temperature and humidity inside the pack are not modelled. Ventilation is handled only as vent count and size.'],
+  [/carbon|\bco2\b|emission|\blca\b|life.?cycle/, 'Carbon footprint and life-cycle impact are not calculated. Material mass per pack is the closest figure available.'],
+  [/recyclability|sustainability score|eco.?score|eco.?rating|\bscore\b/, 'There is no recyclability or sustainability score. Disposal routes are producer-stated and depend on local collection.'],
+  [/tooling|mou?ld cost|die cost|machine/, 'Tooling and machine costs are not estimated; per-pack cost covers material and an assumed converting cost.'],
+  [/certif|validat|\bista\b|\bastm\b|\bfea\b|finite element/, 'No test here is validated or certified, and there is no finite-element analysis. The Simulation Lab runs simplified comparative models.'],
+]
 
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n))
 const roundTo = (n: number, step: number) => +(Math.round(n / step) * step).toFixed(3)
@@ -103,6 +144,7 @@ export function interpret(input: string, ctx: Ctx): AssistantReply {
   const text = input.toLowerCase().trim()
   const p = ctx.params
   if (!text) return { kind: 'unsupported', summary: 'Type a request, for example “Add more ventilation holes”.' }
+  for (const [re, msg] of OUT_OF_SCOPE) if (re.test(text)) return { kind: 'unsupported', summary: `Outside what this studio models. ${msg}`, related: relatedExamples(text) }
 
   /* compare materials */
   if (/\b(compare|vs|versus)\b/.test(text)) {
@@ -232,7 +274,7 @@ export function interpret(input: string, ctx: Ctx): AssistantReply {
     const w = roundTo(clamp(p.wallMm * (thinner ? 0.85 : 1.15), b.min, b.max), b.step)
     return propose(ctx, 'wall', `Wall ${p.wallMm} → ${w} mm`, { wallMm: w }, { wallMm: thinner ? 'Less material.' : 'More stiffness.' })
   }
-  return { kind: 'unsupported', summary: 'I don’t recognise that request. This is a rule-based assistant with a fixed set of supported commands.' }
+  return { kind: 'unsupported', summary: 'I don’t recognise that request. This is a rule-based assistant with a fixed set of supported commands.', related: relatedExamples(text) }
 }
 
 function contents(ctx: Ctx): Contents {

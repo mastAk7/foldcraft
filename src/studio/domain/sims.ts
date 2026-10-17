@@ -30,6 +30,9 @@ import type {
  */
 
 const G = 9.81
+
+/** Bump whenever model maths, settings or trace shape change: older stored runs then read as superseded. */
+export const SIM_MODEL_VERSION = 'sims-2'
 /** Assumed stiffness of a 4 mm fibre cushioning pad under one unit, N/m. */
 const PAD_K = 4e3
 
@@ -120,7 +123,7 @@ export function runDrop(ctx: SimContext, s: DropSettings): DropOutput {
   const dt = 1e-5
   const tFall = Math.sqrt((2 * h) / G)
   const tEnd = tFall + 0.35
-  const trace: DropTrace = { t: [], y: [], rel: [], impactIndex: 0 }
+  const trace: DropTrace = { t: [], y: [], rel: [], acc: [], contact: [], impactIndex: 0 }
   let peakProdF = 0
   let peakPkgF = 0
   let maxCrush = 0
@@ -153,6 +156,8 @@ export function runDrop(ctx: SimContext, s: DropSettings): DropOutput {
       trace.t.push(t)
       trace.y.push(-pkgB.x * 1000)
       trace.rel.push(d * 1000)
+      trace.acc.push(fg / M / G)
+      trace.contact.push(fc > 0 ? 1 : fc < 0 ? 2 : 0)
       nextSample += t < tFall - 0.02 ? 0.01 : 0.001
     }
   }
@@ -238,11 +243,29 @@ export function runDrop(ctx: SimContext, s: DropSettings): DropOutput {
 
 /* ================================================================= stack */
 
+export interface StackLayer {
+  /** Static load from the packs above, N. */
+  loadN: number
+  /** Derated capacity (same for every pack of one design), N. */
+  capacityN: number
+  /** load × safety ÷ derated capacity */
+  utilisation: number
+  /** Horizontal offset of this pack's centre from the bottom pack, mm (alternating misalignment). */
+  xMm: number
+  /** Centre of mass of all packs above, relative to this pack's centre, mm (0 for the top pack). */
+  comOffsetMm: number
+}
+
 export interface StackOutput {
   result: SimResult
   /** Load utilisation for each pack, bottom first (load × safety ÷ derated capacity). */
   utilisation: number[]
+  layers: StackLayer[]
   overhangPct: number
+  /** Half the footprint along the offset direction, mm: the static tipping limit for a centre of mass. */
+  supportHalfMm: number
+  /** 1 − largest centre-of-mass offset ÷ half footprint. Below 0 the stack cannot stand (static geometry). */
+  tipMargin: number
 }
 
 export const SAFETY: Record<Transport, number> = { local: 2.5, regional: 3, long_haul: 4 }
@@ -272,6 +295,17 @@ export function runStack(ctx: SimContext, s: StackSettings): StackOutput {
   const layers = Math.max(1, Math.round(s.layers))
   const utilisation = Array.from({ length: layers }, (_, i) => ((layers - 1 - i) * grossKg * G * sf) / derated)
   const bottomLoadN = (layers - 1) * grossKg * G
+  // Static geometry: alternate packs are shifted by the offset along the narrower footprint side.
+  // Identical packs, so the centre of mass of the packs above pack i is the mean of their offsets.
+  const xs = Array.from({ length: layers }, (_, i) => (i % 2 ? s.offsetMm : 0))
+  const supportHalfMm = Math.min(ctx.pkg.outer.l, ctx.pkg.outer.w) / 2
+  const layerInfo: StackLayer[] = xs.map((x, i) => {
+    const above = xs.slice(i + 1)
+    const com = above.length ? above.reduce((a, b) => a + b, 0) / above.length - x : 0
+    return { loadN: (layers - 1 - i) * grossKg * G, capacityN: derated, utilisation: utilisation[i], xMm: x, comOffsetMm: com }
+  })
+  const maxCom = Math.max(0, ...layerInfo.map((l) => Math.abs(l.comOffsetMm)))
+  const tipMargin = 1 - maxCom / supportHalfMm
   const margin = bottomLoadN > 0 ? derated / (bottomLoadN * sf) : Infinity
   let risk: Risk = margin >= 1.2 ? 'low' : margin >= 0.9 ? 'moderate' : 'high'
   const concerns: string[] = []
@@ -284,6 +318,11 @@ export function runStack(ctx: SimContext, s: StackSettings): StackOutput {
     concerns.push(`Offset of ${s.offsetMm} mm is ${(overhang * 100).toFixed(0)}% of the footprint: the stack may lean or topple.`)
     failureModes.push('Stack instability (misalignment)')
     risk = maxRisk(risk, 'moderate')
+  }
+  if (tipMargin < 0) {
+    concerns.push(`The centre of mass of the packs above sits ${maxCom.toFixed(0)} mm off-centre, beyond the ${supportHalfMm.toFixed(0)} mm half-footprint of the pack below: the stack cannot stand as arranged (static geometry check).`)
+    failureModes.push('Stack tips over (static geometry)')
+    risk = 'high'
   }
   if (climate < 1) concerns.push(`${ctx.coldChain === 'frozen' ? 'Frozen' : 'Chilled'} storage reduces ${mat.short} strength to ${Math.round(climate * 100)}% in this model.`)
 
@@ -304,7 +343,10 @@ export function runStack(ctx: SimContext, s: StackSettings): StackOutput {
 
   return {
     utilisation,
+    layers: layerInfo,
     overhangPct: overhang * 100,
+    supportHalfMm,
+    tipMargin,
     result: {
       test: 'stack',
       method: 'simplified_estimate',
@@ -317,6 +359,7 @@ export function runStack(ctx: SimContext, s: StackSettings): StackOutput {
         { key: 'derated', label: 'Derated capacity', value: derated, unit: 'N', digits: 0, method: 'simplified_estimate' },
         { key: 'margin', label: `Margin after ×${sf} safety`, value: Number.isFinite(margin) ? margin : 99, unit: '×', digits: 2, method: 'simplified_estimate' },
         { key: 'overhang', label: 'Overhang', value: overhang * 100, unit: '%', digits: 0, method: 'calculated' },
+        { key: 'com', label: 'Largest centre-of-mass offset', value: maxCom, unit: 'mm', digits: 0, method: 'calculated' },
       ],
       concerns,
       failureModes,
@@ -326,9 +369,10 @@ export function runStack(ctx: SimContext, s: StackSettings): StackOutput {
         'McKee is an empirical formula for corrugated boxes; for board cartons, pulp and PET trays it is used here only as a comparative approximation.',
         `Climate factor ${climate.toFixed(2)}${humid < 1 ? ', humidity ≥85% ×0.85' : ''}, misalignment factor ${misalign.toFixed(2)} (1 − 1.5 × offset/footprint, min 0.4).`,
         `Safety factor ×${sf} for ${ctx.transport.replace('_', ' ')} transport (time under load, handling).`,
+        `Static tipping check: the centre of mass of the packs above each pack must stay within ${supportHalfMm.toFixed(0)} mm (half the narrower footprint side). Rigid packs, no sway or dynamics.`,
         'Risk bands: margin ≥1.2 low, ≥0.9 moderate, below high.',
       ],
-      limitations: [...LIMITATIONS, 'Creep over time, pallet overhang and load from non-identical packs are not modelled.'],
+      limitations: [...LIMITATIONS, 'Creep over time, pallet overhang, load from non-identical packs and how a pack actually collapses are not modelled.'],
     },
   }
 }
@@ -347,6 +391,12 @@ const PROFILES: Record<VibrationSettings['profile'], { label: string; tones: [nu
 }
 
 export const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([k, v]) => [k, v.label])) as Record<VibrationSettings['profile'], string>
+
+/** The defined base-motion inputs of a profile, in words (amplitude @ frequency, bump level). */
+export function profileSpec(p: VibrationSettings['profile']) {
+  const prof = PROFILES[p]
+  return `${prof.tones.map(([a, f]) => `${a} mm @ ${f} Hz`).join(' + ')}${prof.bumpG ? `, ${prof.bumpG} g bumps` : ', no bumps'}`
+}
 
 function mulberry32(seed: number) {
   let a = seed
@@ -378,6 +428,7 @@ export function runVibration(ctx: SimContext, s: VibrationSettings): VibrationOu
     return lateral ? a * 0.5 : a
   }
   const baseDisp = (t: number) => prof.tones.reduce((s2, [ampMm, f], i) => s2 - ampMm * Math.sin(2 * Math.PI * f * t + phases[i]), 0)
+  const baseLatDisp = (t: number) => 0.5 * prof.tones.reduce((s2, [ampMm, f], i) => s2 - ampMm * Math.sin(2 * Math.PI * f * t + latPhases[i]), 0)
 
   const m = ctx.unitWeightG / 1000
   const cells = cellsSeparateUnits(ctx)
@@ -394,7 +445,8 @@ export function runVibration(ctx: SimContext, s: VibrationSettings): VibrationOu
   const x = { x: 0, v: 0, m }
   const y = { x: m * G / kf * -1, v: 0, m }
   const dt = 1e-4
-  const trace: VibrationTrace = { t: [], base: [], px: [], py: [] }
+  const trace: VibrationTrace = { t: [], base: [], baseLat: [], px: [], py: [], contact: [] }
+  let flags = 0
   let airborne = 0
   let travel = 0
   let wallImpacts = 0
@@ -410,14 +462,20 @@ export function runVibration(ctx: SimContext, s: VibrationSettings): VibrationOu
     // Vertical: floor contact below 0, lid contact above headspace (if there is a lid).
     const fFloor = contact(-y.x, -y.v, kf, cf)
     const fLid = lid ? contact(y.x - headspace, y.v, kf, cf) : 0
-    if (fFloor <= 0) airborne += dt
+    if (fFloor <= 0) {
+      airborne += dt
+      flags |= 8
+    }
     const lidNow = fLid > 0
+    if (lidNow) flags |= 4
     if (lidNow && !inLid) lidImpacts++
     inLid = lidNow
     // Lateral: walls at ±play/2; Coulomb friction (regularised) only while pressed on the floor.
     const half = play / 2
     const fWall = -contact(x.x - half, x.v, kw, cw) + contact(-half - x.x, -x.v, kw, cw)
     const wallNow = fWall !== 0
+    if (fWall < 0) flags |= 1
+    if (fWall > 0) flags |= 2
     if (wallNow && !inWall) wallImpacts++
     inWall = wallNow
     const friction = -mu * fFloor * Math.tanh(x.v / 0.005)
@@ -429,8 +487,11 @@ export function runVibration(ctx: SimContext, s: VibrationSettings): VibrationOu
     if (t >= nextSample) {
       trace.t.push(t)
       trace.base.push(baseDisp(t))
+      trace.baseLat.push(baseLatDisp(t))
       trace.px.push(x.x * 1000)
       trace.py.push(Math.max(0, y.x) * 1000)
+      trace.contact.push(flags)
+      flags = 0
       nextSample += 1 / 120
     }
   }
@@ -495,35 +556,39 @@ export function runVibration(ctx: SimContext, s: VibrationSettings): VibrationOu
         `One ${ctx.unitWeightG} g unit, friction coefficient ${mu}, free play ${(play * 1000).toFixed(1)} mm${cells ? ' (separated by cells)' : ' (loose fill: sliding counted ×2.5 for rubbing against neighbouring units)'}.`,
         `Risk uses the larger of: sliding ÷ ${sens.abrasion.toFixed(0)} mm/s and peak contact ÷ ${(sens.g * 0.5).toFixed(0)} g (assumed levels).`,
       ],
-      limitations: [...LIMITATIONS, 'Resonance of the pallet or vehicle, unit-to-unit stacking and temperature effects are not modelled.'],
+      limitations: [...LIMITATIONS, 'Resonance of the pallet or vehicle, rotation of the package, unit-to-unit stacking and temperature effects are not modelled.'],
     },
   }
 }
 
 /* ================================================================= break my design */
 
+export interface BreakConditions {
+  drop: DropSettings
+  stack: StackSettings
+  vibration: VibrationSettings
+}
+
 export interface BreakReport {
   drop: DropOutput
   stack: StackOutput
   vibration: VibrationOutput
-  conditions: { drop: DropSettings; stack: StackSettings; vibration: VibrationSettings }
+  conditions: BreakConditions
   risk: Risk
   suggestions: Suggestion[]
 }
 
-export function breakConditions(ctx: SimContext) {
+/** Fixed, harsher conditions. Depends only on the brief's stack height. */
+export function breakConditions(ctx: Pick<SimContext, 'stackLayers'>): BreakConditions {
   return {
-    drop: { heightCm: 80, orientation: 'corner' as const },
+    drop: { heightCm: 80, orientation: 'corner' },
     stack: { layers: Math.max(2, ctx.stackLayers + 2), offsetMm: 10 },
-    vibration: { profile: 'rough' as const, durationS: 3 },
+    vibration: { profile: 'rough', durationS: 3 },
   }
 }
 
-export function breakMyDesign(ctx: SimContext): BreakReport {
-  const conditions = breakConditions(ctx)
-  const drop = runDrop(ctx, conditions.drop)
-  const stack = runStack(ctx, conditions.stack)
-  const vibration = runVibration(ctx, conditions.vibration)
+/** Combined summary of three already-computed stages. */
+export function combineBreak(drop: DropOutput, stack: StackOutput, vibration: VibrationOutput, conditions: BreakConditions): BreakReport {
   const seen = new Set<string>()
   const suggestions = [...drop.result.suggestions, ...stack.result.suggestions, ...vibration.result.suggestions].filter((s) => {
     const k = JSON.stringify(s.patch)
@@ -532,4 +597,8 @@ export function breakMyDesign(ctx: SimContext): BreakReport {
     return true
   })
   return { drop, stack, vibration, conditions, risk: maxRisk(drop.result.risk, stack.result.risk, vibration.result.risk), suggestions }
+}
+
+export function breakMyDesign(ctx: SimContext, conditions: BreakConditions = breakConditions(ctx)): BreakReport {
+  return combineBreak(runDrop(ctx, conditions.drop), runStack(ctx, conditions.stack), runVibration(ctx, conditions.vibration), conditions)
 }

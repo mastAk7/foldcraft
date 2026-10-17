@@ -13,7 +13,8 @@ import { TEMPLATE_INFO } from './domain/params'
 import { PRODUCE } from './domain/produce'
 import { deriveRecord } from './domain/passport'
 import { currentVersion } from './domain/project'
-import { breakMyDesign, LIMITATIONS } from './domain/sims'
+import { describeSettings, runsForVersion } from './domain/runs'
+import { breakMyDesign, LIMITATIONS, SIM_MODEL_VERSION } from './domain/sims'
 import { StudioHeader } from './StudioApp'
 import { selectProject, useStudio } from './store'
 import { Callout, fmt, METHOD_META } from './ui'
@@ -25,7 +26,7 @@ export function Report({ id }: { id: string }) {
   const data = useMemo(() => {
     if (!project || !fin) return null
     const a = analyse(fin.params, project.brief, project.assumptions)
-    return { a, report: breakMyDesign(a.ctx), record: deriveRecord(project.brief, fin.params, a) }
+    return { a, report: breakMyDesign(a.ctx), runs: runsForVersion(project.runs, fin, a.ctx), generatedAt: new Date(), record: deriveRecord(project.brief, fin.params, a) }
   }, [project, fin])
   const latest = project ? registry.latest(project.brief.metadata.productId) : null
   const [qr, setQr] = useState<string | null>(null)
@@ -44,7 +45,7 @@ export function Report({ id }: { id: string }) {
         </main>
       </>
     )
-  const { a, report, record } = data
+  const { a, report, runs, generatedAt, record } = data
   const rec = latest?.record ?? record
   const p = fin.params
   return (
@@ -129,7 +130,35 @@ export function Report({ id }: { id: string }) {
             ))}
           </ul>
 
-          <h2 className="print-break mt-5 text-[16px] font-bold">Simulation summary</h2>
+          <h2 className="print-break mt-5 text-[16px] font-bold">Recorded Simulation Lab runs for v{fin.n}</h2>
+          {runs.length ? (
+            <>
+              <p className="text-ink-2">Runs completed in the Simulation Lab on this device, with the inputs they were computed for. “Matches” means re-running today would use identical inputs and model version.</p>
+              {runs.map(({ run, ...st }) => (
+                <section key={run.id} className="mt-2 border-l-4 border-line pl-3">
+                  <h3 className="font-bold">
+                    {run.test === 'break' ? 'Break my design' : `${run.test[0].toUpperCase()}${run.test.slice(1)} test`} · {describeSettings(run.test, run.settings)}
+                  </h3>
+                  <p className="text-[12px] text-ink-3">
+                    Run {new Date(run.at).toLocaleString()} · design v{run.versionN} · model {run.modelVersion} · overall est. risk {run.risk} ·{' '}
+                    {st.status === 'matches' ? <strong className="text-moss">matches current inputs</strong> : <strong className="text-amber">superseded: {st.reason}</strong>}
+                  </p>
+                  {run.results.map((r) => (
+                    <p key={r.test} className="text-ink-2">
+                      <span className="font-semibold capitalize">{r.test}:</span> {r.headline} [{METHOD_META[r.method].label}, est. risk {r.risk}] · {r.metrics.map((m) => `${m.label} ${fmt(m.value, m.digits ?? 1)} ${m.unit}`).join(' · ')}
+                    </p>
+                  ))}
+                </section>
+              ))}
+            </>
+          ) : (
+            <p className="text-ink-2">No Simulation Lab runs are recorded for v{fin.n} on this device.</p>
+          )}
+
+          <h2 className="mt-5 text-[16px] font-bold">Model estimates generated for this report</h2>
+          <p className="rounded-md bg-black/[0.04] p-2 text-[12px] text-ink-2">
+            Computed when this report was opened ({generatedAt.toLocaleString()}) for design v{fin.n} with model {SIM_MODEL_VERSION}, under the fixed Break-my-design conditions: {describeSettings('break', report.conditions)}. This is a deterministic recalculation, not a record of a test run in an earlier session.
+          </p>
           {[report.drop.result, report.stack.result, report.vibration.result].map((r) => (
             <section key={r.test} className="mt-2 border-l-4 border-line pl-3">
               <h3 className="font-bold capitalize">

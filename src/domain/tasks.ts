@@ -1,5 +1,5 @@
 import { needsPackagingAction, pendingComponents } from './circularity'
-import { addDays, DATE_KIND_LABEL, daysBetween, formatDate, isoDate, relativeDays } from './dates'
+import { addDays, DATE_KIND_LABEL, DATE_KIND_MEANING, daysBetween, formatDate, isoDate, relativeDays } from './dates'
 import {
   currentRecommendation,
   LOCATION_LABEL,
@@ -86,9 +86,10 @@ export function deriveItemTasks(item: ConsumerItem, today = isoDate()): Task[] {
           coach: 'storage',
           itemId: item.id,
           priority: days < 0 ? 85 : 80,
-          title: days < 0 ? `${name}: date has passed` : `Plan to use the ${name}`,
-          reason: `${DATE_KIND_LABEL[d.kind]} date: ${formatDate(d.date)} (${relativeDays(days)}). This is a prompt to check it. Foldcraft doesn’t know the product’s actual condition.`,
+          title: `Check the ${name}: ${DATE_KIND_LABEL[d.kind].toLowerCase()} date ${days < 0 ? 'has passed' : relativeDays(days)}`,
+          reason: `${DATE_KIND_LABEL[d.kind]} date on the record: ${formatDate(d.date)} (${relativeDays(days)}). ${DATE_KIND_MEANING[d.kind]} A date alone can’t tell Foldcraft how the product is now. Look at the item and its label before deciding.`,
           source: sourceLabel(item),
+          dateKind: d.kind,
         })
       }
     }
@@ -104,8 +105,8 @@ export function deriveItemTasks(item: ConsumerItem, today = isoDate()): Task[] {
           coach: 'storage',
           itemId: item.id,
           priority: 82,
-          title: `Opened ${name}: use within ${within} days`,
-          reason: `You recorded opening it on ${formatDate(item.openedAt)}. The label suggests using it by ${formatDate(deadline)} (${relativeDays(days)}).`,
+          title: `Opened ${name}: label says use within ${within} days`,
+          reason: `You recorded opening it on ${formatDate(item.openedAt)}. Going by the label, that window ends ${formatDate(deadline)} (${relativeDays(days)}). Check the item itself; Foldcraft can’t see its condition.`,
           source: sourceLabel(item),
         })
       }
@@ -134,7 +135,7 @@ export function deriveItemTasks(item: ConsumerItem, today = isoDate()): Task[] {
 
 /** Key under which a task's dismiss/snooze state is stored on the item. */
 export function taskStateKey(task: Task): string {
-  return task.type === 'date_check' ? `date_check:${task.id.split(':')[2]}` : task.type
+  return task.type === 'date_check' ? `date_check:${task.dateKind ?? task.id.split(':').pop()}` : task.type
 }
 
 export function visibleTasks(items: ConsumerItem[], today = isoDate(), now = new Date()): Task[] {
@@ -150,7 +151,38 @@ export function visibleTasks(items: ConsumerItem[], today = isoDate(), now = new
     .sort((a, b) => b.priority - a.priority)
 }
 
-/** Tasks that can be dismissed (non-safety, informational). Mismatches and packaging are resolved by acting. */
+/**
+ * Tasks that can be dismissed (non-safety, informational). Mismatches and packaging are resolved by
+ * acting. A use-by or expiry date is safety information from the label, so it can be snoozed but
+ * not dismissed while the item is still recorded as in use.
+ */
 export function canDismiss(task: Task): boolean {
-  return task.type === 'storage_unknown' || task.type === 'date_check' || task.type === 'opened_window'
+  if (task.type === 'date_check') return task.dateKind !== 'use_by' && task.dateKind !== 'expiry'
+  return task.type === 'storage_unknown' || task.type === 'opened_window'
 }
+
+export type TaskActionId = 'move' | 'pick_location' | 'checked_label' | 'view' | 'snooze' | 'dismiss' | 'confirm_used' | 'record_packaging'
+
+/**
+ * Actions offered for a task, primary first. Marking an item used up is never the primary action of a
+ * reminder and always needs a second, explicit confirmation in the UI: a date prompt is a reason to
+ * look at the item, not evidence that it was consumed.
+ */
+export function taskActions(task: Task): TaskActionId[] {
+  switch (task.type) {
+    case 'storage_mismatch':
+      return ['move', 'snooze', 'view']
+    case 'confirm_location':
+      return ['pick_location', 'view']
+    case 'storage_unknown':
+      return ['view', 'checked_label']
+    case 'date_check':
+    case 'opened_window':
+      return ['view', 'snooze', ...(canDismiss(task) ? (['dismiss'] as const) : []), 'confirm_used']
+    case 'packaging_next':
+      return ['record_packaging']
+  }
+}
+
+/** Actions that need an explicit second confirmation before they change the item. */
+export const NEEDS_CONFIRM: TaskActionId[] = ['confirm_used']

@@ -1,130 +1,120 @@
 import { Line } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
-import type { StackLayer } from '../domain/sims'
+import { ORIENT, type StackLayer } from '../domain/sims'
 import type { BuiltPackage } from '../domain/templates'
 import type { DesignParams, DropOrientation, DropTrace, ProduceKind, Dims, VibrationTrace } from '../domain/types'
+import { G, SCENE_PER_M } from '../domain/units'
 import { Contents, PackageModel, ProduceUnit, S } from '../three/PackageModel'
+import { crushMatrix, lowest, sample, sampleIndex, squashFrame } from './sceneMath'
+import { topple, toppleAt } from './topple'
 import type { SceneClock } from './TraceTimeline'
 
 /**
- * Scenes animate the simplified models' own outputs. They add no physics of their own: anything not
- * computed by the model (the post-drop settle, the stack placement) is kinematic and labelled in the lab.
+ * Scenes animate the models' own outputs at true scale: model positions (m) × SCENE_PER_M, the same
+ * transform as the package geometry. They add no physics of their own; the stack placement is kinematic
+ * and labelled as such, and the only optional exaggeration (vibration deck ×MAG) is off by default.
  */
 
-const ORIENT: Record<DropOrientation, [number, number, number]> = {
-  bottom: [0, 0, 0],
-  side: [Math.PI / 2, 0, 0],
-  corner: [0.62, 0.79, 0.32],
-}
-
-/** Drop scene timing: fall at 60% speed, 6% speed through the contact window. */
+/** Drop playback rate: 60% in free fall, easing to 6% through the contact window (time scaling only; positions are the model's). */
 export const DROP_SPEED = { fall: 0.6, impact: 0.06 }
-/** Visual magnification of motion inside the pack (drop and vibration) and of deck motion (vibration). */
+/** Optional, labelled exaggeration of the transport deck's displacement (vibration). Off by default. */
 export const MAG = 4
 /** Vibration playback speed. */
 export const VIB_SPEED = 0.5
+/** Unit deceleration ÷ assumed sensitivity bands for the floor cue: the same bands as the drop risk. */
+export const CUE_BANDS = [0.8, 1.2] as const
 
 export const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-/** Lowest corner of the rotated outer box: how far to lift it so it rests on the floor, and where it touches. */
-function lowest(outer: Dims, q: THREE.Quaternion) {
-  let min = Infinity
-  const at = new THREE.Vector3()
-  const v = new THREE.Vector3()
-  for (const x of [-outer.l / 2, outer.l / 2])
-    for (const y of [0, outer.h])
-      for (const z of [-outer.w / 2, outer.w / 2]) {
-        v.set(x * S, y * S, z * S).applyQuaternion(q)
-        if (v.y < min - 1e-9) {
-          min = v.y
-          at.copy(v)
-        }
-      }
-  return { lift: -min, x: at.x, z: at.z }
-}
-
-function sampleIndex(t: number[], time: number) {
-  let lo = 0
-  let hi = t.length - 1
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1
-    if (t[mid] <= time) lo = mid
-    else hi = mid - 1
-  }
-  return lo
-}
-
-function sample(arr: number[], t: number[], time: number) {
-  const i = sampleIndex(t, time)
-  if (i >= t.length - 1) return arr[arr.length - 1]
-  const f = Math.max(0, Math.min(1, (time - t[i]) / (t[i + 1] - t[i] || 1)))
-  return arr[i] + (arr[i + 1] - arr[i]) * f
-}
-
-const ease = (k: number) => (k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2)
-const IDENTITY = new THREE.Quaternion()
 const CONTACT_COLOR = ['#000000', '#e0567a', '#7b5cd6']
+const smooth = (a: number, b: number, x: number) => {
+  const k = Math.max(0, Math.min(1, (x - a) / (b - a)))
+  return k * k * (3 - 2 * k)
+}
+
+/** Playback rate at model time t: slow motion around the first contact, blended smoothly. */
+export function dropRate(t: number, impactT: number) {
+  const w = smooth(impactT - 0.03, impactT - 0.008, t) * (1 - smooth(impactT + 0.04, impactT + 0.07, t))
+  return DROP_SPEED.fall + (DROP_SPEED.impact - DROP_SPEED.fall) * w
+}
+
+export const cueColor = (ratio: number) => (ratio < CUE_BANDS[0] ? '#3f9f6a' : ratio < CUE_BANDS[1] ? '#d29a22' : '#c23b55')
 
 /* ================================================================= drop */
 
 /**
- * Package held in the test orientation and released from the test height; vertical motion, rebound
- * and the unit's movement come from the two-mass trace. The floor ring's strength follows the
- * computed contact deceleration. After the trace ends, side/corner drops tip onto the base: that
- * settle is illustrative (the model is one-axis).
+ * Package held in the test orientation and released from the test height. Height, deformation and the
+ * unit's movement come from the two-mass trace, all at true scale (SI × SCENE_PER_M). The floor-contact
+ * compression is drawn as a compression of the pack along the impact direction, with the contact point
+ * kept on the floor. When the trace has come to rest, the rigid-box topple solver (topple.ts) takes the
+ * package from its test pose to the face it actually falls onto; bottom and side poses are already stable.
  */
-export function DropScene({ pkg, params, kind, unit, trace, orientation, heightCm, runId, clock, onComplete }: { pkg: BuiltPackage; params: DesignParams; kind: ProduceKind; unit: Dims; trace: DropTrace; orientation: DropOrientation; heightCm: number; runId: number; clock?: SceneClock; onComplete?: () => void }) {
+export function DropScene({ pkg, params, kind, unit, trace, orientation, heightCm, sensitivityG, runId, clock, onComplete }: { pkg: BuiltPackage; params: DesignParams; kind: ProduceKind; unit: Dims; trace: DropTrace; orientation: DropOrientation; heightCm: number; sensitivityG: number; runId: number; clock?: SceneClock; onComplete?: () => void }) {
   const group = useRef<THREE.Group>(null)
   const tilt = useRef<THREE.Group>(null)
+  const squash = useRef<THREE.Group>(null)
   const prod = useRef<THREE.Group>(null)
   const ring = useRef<THREE.Mesh>(null)
   const st = useRef({ t: 0, run: -1, done: false, settle: 0 })
   const q0 = useMemo(() => new THREE.Quaternion().setFromEuler(new THREE.Euler(...ORIENT[orientation])), [orientation])
   const rest = useMemo(() => lowest(pkg.outer, q0), [pkg.outer, q0])
-  // The impact axis is world-vertical; express it in the package frame.
+  // The impact axis is world-vertical; express it in the package frame (the unit's motion group is not rotated with the unit).
   const down = useMemo(() => new THREE.Vector3(0, -1, 0).applyQuaternion(q0.clone().invert()), [q0])
+  const crush = useMemo(() => squashFrame(pkg.outer, down), [pkg.outer, down])
+  const fall = useMemo(() => topple(pkg.outer, q0), [pkg.outer, q0])
   const impactT = trace.t[trace.impactIndex] ?? 0
   const endT = trace.t[trace.t.length - 1]
-  const peakAcc = useMemo(() => Math.max(1e-6, ...trace.acc), [trace.acc])
   const reduced = prefersReducedMotion()
-  const tmpQ = useMemo(() => new THREE.Quaternion(), [])
-  const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(unit.l * S * 1.08, unit.h * S * 1.08, unit.w * S * 1.08)), [unit])
+  const tmp = useMemo(() => ({ q: new THREE.Quaternion(), p: new THREE.Vector3(), m: new THREE.Matrix4() }), [])
+  const boxGeo = useMemo(() => new THREE.BoxGeometry(unit.l * S * 1.08, unit.h * S * 1.08, unit.w * S * 1.08), [unit])
+  const edges = useMemo(() => new THREE.EdgesGeometry(boxGeo), [boxGeo])
   const wireMat = useMemo(() => new THREE.LineBasicMaterial({ color: '#e0567a', transparent: true, opacity: 0 }), [])
-  const ringMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#c4613b', transparent: true, opacity: 0, depthWrite: false }), [])
+  const ringMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#3f9f6a', transparent: true, opacity: 0, depthWrite: false }), [])
+  useEffect(() => () => void (boxGeo.dispose(), edges.dispose()), [boxGeo, edges])
+  useEffect(() => () => void (wireMat.dispose(), ringMat.dispose()), [wireMat, ringMat])
 
   useFrame((_, dtRaw) => {
     const c = st.current
+    // Playback policy: at most 50 ms of wall time per frame, so a slow frame slows playback instead of skipping samples.
     const dt = Math.min(dtRaw, 0.05)
     if (c.run !== runId) {
       c.run = runId
       c.t = reduced ? endT : 0
+      c.settle = reduced ? fall.final.t : 0
       c.done = false
-      c.settle = 0
     }
-    if (c.t < endT) {
-      const near = c.t > impactT - 0.012 && c.t < impactT + 0.05
-      c.t = Math.min(endT, c.t + dt * (near ? DROP_SPEED.impact : DROP_SPEED.fall))
-    } else if (!c.done) {
+    if (c.t < endT) c.t = Math.min(endT, c.t + dt * dropRate(c.t, impactT))
+    else if (c.settle < fall.final.t) c.settle = Math.min(fall.final.t, c.settle + dt * DROP_SPEED.fall)
+    else if (!c.done) {
       c.done = true
       onComplete?.()
-    } else if (orientation !== 'bottom' && !reduced) c.settle = Math.min(1, c.settle + dt / 0.9)
+    }
 
     const i = sampleIndex(trace.t, c.t)
     const y = sample(trace.y, trace.t, c.t)
     const rel = sample(trace.rel, trace.t, c.t)
-    const s = ease(c.settle)
-    const q = s > 0 ? tmpQ.copy(q0).slerp(IDENTITY, s) : q0
-    if (tilt.current) tilt.current.quaternion.copy(q)
-    if (group.current) group.current.position.y = y * S * (1 - s) + (s > 0 ? lowest(pkg.outer, q).lift : rest.lift)
-    if (prod.current) prod.current.position.copy(down).multiplyScalar(rel * S * MAG * (1 - s))
-    const contact = c.t >= impactT ? trace.contact[i] : 0
-    wireMat.opacity = contact && s === 0 ? 0.95 : 0
+    const settling = c.t >= endT && fall.toppled
+    if (settling) {
+      toppleAt(fall, c.settle, tmp.q, tmp.p)
+      tilt.current?.quaternion.copy(tmp.q)
+      group.current?.position.copy(tmp.p).multiplyScalar(SCENE_PER_M)
+    } else {
+      tilt.current?.quaternion.copy(q0)
+      // Above the floor: the trace height. In contact: the lowest point stays on the floor and the pack compresses.
+      group.current?.position.set(0, Math.max(0, y) * SCENE_PER_M + rest.lift, 0)
+    }
+    if (squash.current) squash.current.matrix.copy(crushMatrix(crush, settling ? 0 : Math.max(0, -y) * SCENE_PER_M, tmp.m))
+    if (prod.current) prod.current.position.copy(down).multiplyScalar(rel * SCENE_PER_M)
+    const contact = c.t >= impactT && !settling ? trace.contact[i] : 0
+    wireMat.opacity = contact ? 0.95 : 0
     if (contact) wireMat.color.set(CONTACT_COLOR[contact])
-    const a = trace.acc[i] / peakAcc
-    ringMat.opacity = s === 0 ? Math.min(0.9, a) : 0
-    if (ring.current) ring.current.scale.setScalar(0.6 + a * 1.2)
+    // Floor cue: deceleration on the unit ÷ the assumed sensitivity, in the risk bands (not scaled per run).
+    const ratio = settling ? 0 : Math.abs(trace.unitAcc[i] ?? 0) / (sensitivityG * G)
+    ringMat.opacity = ratio > 0.05 ? 0.85 : 0
+    ringMat.color.set(cueColor(ratio))
+    ring.current?.scale.setScalar(0.6 + Math.min(1.5, ratio) * 0.8)
     clock?.set(c.t)
   })
 
@@ -132,7 +122,7 @@ export function DropScene({ pkg, params, kind, unit, trace, orientation, heightC
   const hi = pl.length ? pl.length - 1 : -1
   const ext = Math.max(pkg.outer.l, pkg.outer.w, pkg.outer.h)
   const postX = -(ext * 0.75 + 30) * S
-  const hS = heightCm * 10 * S
+  const hS = (heightCm / 100) * SCENE_PER_M
   return (
     <>
       {/* Release height marker */}
@@ -146,22 +136,26 @@ export function DropScene({ pkg, params, kind, unit, trace, orientation, heightC
           <meshStandardMaterial color="#6d6553" />
         </mesh>
       </group>
-      {/* Floor contact cue: strength = computed package deceleration ÷ its peak */}
+      {/* Floor contact cue: unit deceleration ÷ assumed sensitivity, colour by risk band */}
       <mesh ref={ring} position={[rest.x, 0.004, rest.z]} rotation={[-Math.PI / 2, 0, 0]} material={ringMat}>
         <ringGeometry args={[0.12, 0.2, 40]} />
       </mesh>
       <group ref={group}>
         <group ref={tilt}>
-          <PackageModel pkg={pkg} params={params} flags={{ explode: 0, xray: true }} />
-          <Contents pkg={{ ...pkg, arrangement: { ...pkg.arrangement, placements: pl.filter((_, i) => i !== hi) } }} kind={kind} unit={unit} />
-          {hi >= 0 && (
-            <group position={[pl[hi].x * S, pl[hi].y * S, pl[hi].z * S]} rotation={[0, pkg.arrangement.rotated ? Math.PI / 2 : 0, 0]}>
-              <group ref={prod}>
-                <ProduceUnit kind={kind} unit={unit} highlight />
-                <lineSegments geometry={edges} material={wireMat} />
+          <group ref={squash} matrixAutoUpdate={false}>
+            <PackageModel pkg={pkg} params={params} flags={{ explode: 0, xray: true }} />
+            <Contents pkg={{ ...pkg, arrangement: { ...pkg.arrangement, placements: pl.filter((_, i) => i !== hi) } }} kind={kind} unit={unit} />
+            {hi >= 0 && (
+              <group position={[pl[hi].x * S, pl[hi].y * S, pl[hi].z * S]}>
+                <group ref={prod}>
+                  <group rotation={[0, pkg.arrangement.rotated ? Math.PI / 2 : 0, 0]}>
+                    <ProduceUnit kind={kind} unit={unit} highlight />
+                    <lineSegments geometry={edges} material={wireMat} />
+                  </group>
+                </group>
               </group>
-            </group>
-          )}
+            )}
+          </group>
         </group>
       </group>
     </>
@@ -270,11 +264,13 @@ export function StackScene({ pkg, params, layers, supportHalfMm, tipMargin, runI
 /* ================================================================= vibration */
 
 /**
- * A transport deck carries the package with the profile's vertical and lateral base motion; the
- * highlighted unit moves inside its cell by the model's relative motion. Walls and lid flash when
- * the model records contact. The package does not rotate: the model has no rotation.
+ * A transport deck carries the package with the profile's vertical and lateral (package x) base motion;
+ * the highlighted unit moves inside its cell by the model's relative motion. Everything is true scale
+ * unless `exaggerate` is set, which multiplies only the deck's displacement (the whole package moves
+ * with it, so the unit and its walls stay consistent). Walls and lid flash when the model records contact.
+ * The package does not rotate: the model has no rotation.
  */
-export function VibrationScene({ pkg, params, kind, unit, trace, runId, playMm, loop = true, clock, onComplete }: { pkg: BuiltPackage; params: DesignParams; kind: ProduceKind; unit: Dims; trace: VibrationTrace; runId: number; playMm: number; loop?: boolean; clock?: SceneClock; onComplete?: () => void }) {
+export function VibrationScene({ pkg, params, kind, unit, trace, runId, playMm, exaggerate = false, loop = true, clock, onComplete }: { pkg: BuiltPackage; params: DesignParams; kind: ProduceKind; unit: Dims; trace: VibrationTrace; runId: number; playMm: number; exaggerate?: boolean; loop?: boolean; clock?: SceneClock; onComplete?: () => void }) {
   const deck = useRef<THREE.Group>(null)
   const prod = useRef<THREE.Group>(null)
   const st = useRef({ t: 0, run: -1, done: false, flash: [0, 0, 0, 0] })
@@ -282,10 +278,15 @@ export function VibrationScene({ pkg, params, kind, unit, trace, runId, playMm, 
   const reduced = prefersReducedMotion()
   const mats = useMemo(() => [0, 1, 2].map(() => new THREE.MeshBasicMaterial({ color: '#c4613b', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })), [])
   const air = useMemo(() => new THREE.LineBasicMaterial({ color: '#2f78b7', transparent: true, opacity: 0 }), [])
-  const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(unit.l * S * 1.08, unit.h * S * 1.08, unit.w * S * 1.08)), [unit])
+  const boxGeo = useMemo(() => new THREE.BoxGeometry(unit.l * S * 1.08, unit.h * S * 1.08, unit.w * S * 1.08), [unit])
+  const edges = useMemo(() => new THREE.EdgesGeometry(boxGeo), [boxGeo])
+  useEffect(() => () => void (boxGeo.dispose(), edges.dispose()), [boxGeo, edges])
+  useEffect(() => () => void (mats.forEach((m) => m.dispose()), air.dispose()), [mats, air])
+  const deckScale = SCENE_PER_M * (exaggerate ? MAG : 1)
 
   useFrame((_, dtRaw) => {
     const c = st.current
+    // Playback policy: at most 50 ms of wall time per frame (slow frames slow playback, nothing is skipped).
     const dt = Math.min(dtRaw, 0.05)
     if (c.run !== runId) {
       c.run = runId
@@ -301,8 +302,9 @@ export function VibrationScene({ pkg, params, kind, unit, trace, runId, playMm, 
       onComplete?.()
     }
     const i = sampleIndex(trace.t, c.t)
-    if (deck.current) deck.current.position.set(sample(trace.baseLat, trace.t, c.t) * S * MAG, sample(trace.base, trace.t, c.t) * S * MAG, 0)
-    if (prod.current) prod.current.position.set(sample(trace.px, trace.t, c.t) * S * MAG, sample(trace.py, trace.t, c.t) * S * MAG, 0)
+    deck.current?.position.set(sample(trace.baseLat, trace.t, c.t) * deckScale, sample(trace.base, trace.t, c.t) * deckScale, 0)
+    // The unit's motion inside its cell is always true scale, so it meets the drawn walls exactly where the model does.
+    prod.current?.position.set(sample(trace.px, trace.t, c.t) * SCENE_PER_M, sample(trace.py, trace.t, c.t) * SCENE_PER_M, 0)
     const bits = trace.contact[i] ?? 0
     const decay = Math.exp(-dt * 10)
     ;[1, 2, 4, 8].forEach((b, k) => {
@@ -318,7 +320,11 @@ export function VibrationScene({ pkg, params, kind, unit, trace, runId, playMm, 
   const pl = pkg.arrangement.placements
   const hi = pl.length ? Math.floor(pl.length / 2) : -1
   const o = pkg.outer
-  const half = (unit.l / 2 + playMm / 2) * S
+  // The model's lateral axis is the deck's (world x); the unit may be turned 90° in its cell.
+  const rotated = pkg.arrangement.rotated
+  const ex = rotated ? unit.w : unit.l
+  const ez = rotated ? unit.l : unit.w
+  const half = (ex / 2 + playMm / 2) * S
   const head = (unit.h / 2 + Math.max(1, pkg.arrangement.clearance.y)) * S
   return (
     <group ref={deck}>
@@ -336,20 +342,22 @@ export function VibrationScene({ pkg, params, kind, unit, trace, runId, playMm, 
       <PackageModel pkg={pkg} params={params} flags={{ explode: 0, xray: true }} />
       <Contents pkg={{ ...pkg, arrangement: { ...pkg.arrangement, placements: pl.filter((_, i) => i !== hi) } }} kind={kind} unit={unit} />
       {hi >= 0 && (
-        <group position={[pl[hi].x * S, pl[hi].y * S, pl[hi].z * S]} rotation={[0, pkg.arrangement.rotated ? Math.PI / 2 : 0, 0]}>
-          {/* Contact surfaces of the unit's cell: +x wall, −x wall, lid/rim */}
-          <mesh position={[half + 0.004, 0, 0]} material={mats[0]}>
-            <boxGeometry args={[0.006, unit.h * S, unit.w * S]} />
+        <group position={[pl[hi].x * S, pl[hi].y * S, pl[hi].z * S]}>
+          {/* Contact surfaces at the model's boundaries: +x wall, −x wall, lid/rim */}
+          <mesh position={[half + 0.003, 0, 0]} material={mats[0]}>
+            <boxGeometry args={[0.006, unit.h * S, ez * S]} />
           </mesh>
-          <mesh position={[-half - 0.004, 0, 0]} material={mats[1]}>
-            <boxGeometry args={[0.006, unit.h * S, unit.w * S]} />
+          <mesh position={[-half - 0.003, 0, 0]} material={mats[1]}>
+            <boxGeometry args={[0.006, unit.h * S, ez * S]} />
           </mesh>
-          <mesh position={[0, head, 0]} material={mats[2]}>
-            <boxGeometry args={[unit.l * S, 0.006, unit.w * S]} />
+          <mesh position={[0, head + 0.003, 0]} material={mats[2]}>
+            <boxGeometry args={[ex * S, 0.006, ez * S]} />
           </mesh>
           <group ref={prod}>
-            <ProduceUnit kind={kind} unit={unit} highlight />
-            <lineSegments geometry={edges} material={air} />
+            <group rotation={[0, rotated ? Math.PI / 2 : 0, 0]}>
+              <ProduceUnit kind={kind} unit={unit} highlight />
+              <lineSegments geometry={edges} material={air} />
+            </group>
           </group>
         </group>
       )}

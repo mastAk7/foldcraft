@@ -22,7 +22,7 @@ export interface PublishedPassport {
   designVersion: number
   publishedAt: string
   /** Plain summary of the packaging design and its estimates, for the passport page. */
-  summary?: { template: string; outerMm: string; material: string; massG: number; tests: { test: string; risk: string; headline: string; method: string }[] }
+  summary?: { template: string; outerMm: string; material: string; massG: number; tests: { test: string; risk: string; headline: string; method: string; basis?: string; modelVersion?: string; conditions?: string }[] }
 }
 
 interface RegistryFile {

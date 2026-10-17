@@ -110,6 +110,8 @@ src/
   ui/                Interface (panels, coaches, add flow, onboarding, list view…)
 ```
 
+Simulation Lab models, equations, units and the map from every displayed result to its calculation: [`docs/simulation-models.md`](docs/simulation-models.md).
+
 Producer-supplied data (`ProductRecord`) is kept separate from user state (`ConsumerItem`, `LifecycleEvent`). Tasks, storage
 status and world vitality are **derived** rather than stored. To connect a real backend, implement `ProductSource`
 (`resolveQr`, `get`, `list`) against the producer API. The world and UI don't change.

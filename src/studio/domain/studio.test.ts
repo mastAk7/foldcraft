@@ -127,7 +127,7 @@ describe('simulations', () => {
   })
 
   it('stack: McKee form and load are computed as stated', () => {
-    const { capacity, ect, perimeter, form } = stackCapacityN(p)
+    const { capacity, ect, perimeter, form } = stackCapacityN(p, a.pkg.outer)
     expect(capacity).toBeCloseTo(5.87 * ect * Math.sqrt(p.wallMm * perimeter) * form, 6)
     const s = runStack(a.ctx, { layers: 5, offsetMm: 0 })
     const gross = (a.cost.massG + brief.identification.unitWeightG * brief.identification.unitsPerPackage) / 1000

@@ -96,7 +96,7 @@ export function StudioCanvas({ sizeMm, children, resetKey = 0, label, centerY }:
     )
   return (
     <CanvasBoundary>
-      <Canvas shadows dpr={[1, 2]} camera={{ fov: 35, near: 0.05, far: 200 }} aria-label={label} role="img" gl={{ preserveDrawingBuffer: true }}>
+      <Canvas shadows dpr={[1, 1.5]} camera={{ fov: 35, near: 0.05, far: 200 }} aria-label={label} role="img">
         <color attach="background" args={['#f4efe3']} />
         <fog attach="fog" args={['#f4efe3', distance * 2.5, distance * 6]} />
         <hemisphereLight args={['#fffaf0', '#c9bda4', 0.9]} />

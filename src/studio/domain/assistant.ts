@@ -111,7 +111,7 @@ export function impactOf(ctx: Ctx, next: DesignParams): ImpactRow[] {
   return [
     { label: 'Material per pack', before: `${a.cost.massG.toFixed(1)} g`, after: `${b.cost.massG.toFixed(1)} g` },
     { label: 'Cost per pack (indicative)', before: `€${a.cost.perPack.toFixed(3)}`, after: `€${b.cost.perPack.toFixed(3)}` },
-    { label: 'Stack capacity (dry, est.)', before: `${stackCapacityN(ctx.params).capacity.toFixed(0)} N`, after: `${stackCapacityN(next).capacity.toFixed(0)} N` },
+    { label: 'Stack capacity (dry, est.)', before: `${stackCapacityN(ctx.params, a.pkg.outer).capacity.toFixed(0)} N`, after: `${stackCapacityN(next, b.pkg.outer).capacity.toFixed(0)} N` },
     { label: 'Contents', before: fit(a), after: fit(b) },
   ]
 }
@@ -225,8 +225,9 @@ export function interpret(input: string, ctx: Ctx): AssistantReply {
       reasons.material = 'Board is at its thickest; corrugated carries much more load.'
     }
     if (!Object.keys(patch).length) return { kind: 'unsupported', summary: 'This design is already at the strongest supported settings for its material.' }
-    const before = stackCapacityN(p).capacity
-    const after = stackCapacityN(applyPatch(p, patch)).capacity
+    const np = applyPatch(p, patch)
+    const before = stackCapacityN(p, buildPackage(p, contents(ctx)).outer).capacity
+    const after = stackCapacityN(np, buildPackage(np, contents(ctx)).outer).capacity
     return propose(ctx, 'stackable', `More stackable (capacity estimate ${before.toFixed(0)} N → ${after.toFixed(0)} N)`, patch, reasons, ['Uses more material. Check the cost panel.'])
   }
 
@@ -289,7 +290,7 @@ function compareMaterials(ctx: Ctx, a: MaterialId, b: MaterialId): AssistantRepl
     const valid = supported && validateParams(pa).length === 0
     const pkg = buildPackage(pa, contents(ctx))
     const cost = estimateCost(pa, pkg, ctx.brief.identification.batchPackages, ctx.assumptions)
-    return { m, supported: valid, cost, cap: stackCapacityN(pa).capacity }
+    return { m, supported: valid, cost, cap: stackCapacityN(pa, pkg.outer).capacity }
   }
   const A = row(a)
   const B = row(b)

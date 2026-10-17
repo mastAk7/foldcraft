@@ -9,24 +9,44 @@ import type { DesignVersion, DropSettings, Risk, SimResult, StackSettings, Vibra
 export type RunTest = 'drop' | 'stack' | 'vibration' | 'break'
 export type RunSettings = DropSettings | StackSettings | VibrationSettings | BreakConditions
 
-/** The context fields the models actually read. Price assumptions are left out: they don't change any simulation. */
-export function ctxInputs(ctx: SimContext) {
+/** Every context field any model reads. Price assumptions are left out: no simulation reads them. */
+function allInputs(ctx: SimContext) {
   const a = ctx.pkg.arrangement
   return {
     params: ctx.params,
     packMassG: +ctx.packMassG.toFixed(4),
     outer: ctx.pkg.outer,
+    innerH: ctx.pkg.inner.h,
     clearance: a.clearance,
+    layers: a.layers,
     cells: ctx.pkg.cells.length,
     produce: ctx.produce,
     fragility: ctx.fragility,
     unitWeightG: ctx.unitWeightG,
+    unit: ctx.unit,
     units: ctx.units,
     coldChain: ctx.coldChain,
     humidityMaxPct: ctx.humidityMaxPct ?? null,
     transport: ctx.transport,
     stackLayers: ctx.stackLayers,
   }
+}
+type AllInputs = ReturnType<typeof allInputs>
+
+/**
+ * The fields each test's model reads. A run goes out of date only when one of these changes, so e.g. a
+ * cold-chain or transport change leaves drop and vibration results current (they don't use either).
+ */
+export const RELEVANT: Record<RunTest, (keyof AllInputs)[]> = {
+  drop: ['params', 'packMassG', 'innerH', 'clearance', 'layers', 'cells', 'produce', 'fragility', 'unitWeightG', 'unit', 'units'],
+  stack: ['params', 'packMassG', 'outer', 'unitWeightG', 'units', 'coldChain', 'humidityMaxPct', 'transport'],
+  vibration: ['params', 'innerH', 'clearance', 'layers', 'cells', 'produce', 'fragility', 'unitWeightG', 'unit', 'units'],
+  break: ['params', 'packMassG', 'outer', 'innerH', 'clearance', 'layers', 'cells', 'produce', 'fragility', 'unitWeightG', 'unit', 'units', 'coldChain', 'humidityMaxPct', 'transport', 'stackLayers'],
+}
+
+export function ctxInputs(ctx: SimContext, test: RunTest): Partial<AllInputs> {
+  const all = allInputs(ctx)
+  return Object.fromEntries(RELEVANT[test].map((k) => [k, all[k]])) as Partial<AllInputs>
 }
 export type RunInputs = ReturnType<typeof ctxInputs>
 
@@ -55,7 +75,7 @@ function hash(s: string) {
 }
 
 export function runKey(test: RunTest, versionId: string, ctx: SimContext, settings: RunSettings, modelVersion = SIM_MODEL_VERSION) {
-  return `${modelVersion}:${test}:${hash(stableStringify({ test, versionId, settings, inputs: ctxInputs(ctx) }))}`
+  return `${modelVersion}:${test}:${hash(stableStringify({ test, versionId, settings, inputs: ctxInputs(ctx, test) }))}`
 }
 
 export interface RunMeta {
@@ -70,7 +90,7 @@ export interface RunMeta {
 }
 
 export function makeMeta(test: RunTest, version: Pick<DesignVersion, 'id' | 'n'>, ctx: SimContext, settings: RunSettings, at = new Date().toISOString()): RunMeta {
-  return { key: runKey(test, version.id, ctx, settings), test, versionId: version.id, versionN: version.n, settings, inputs: ctxInputs(ctx), modelVersion: SIM_MODEL_VERSION, at }
+  return { key: runKey(test, version.id, ctx, settings), test, versionId: version.id, versionN: version.n, settings, inputs: ctxInputs(ctx, test), modelVersion: SIM_MODEL_VERSION, at }
 }
 
 const SETTING_LABEL: Record<string, [string, string]> = {
@@ -85,11 +105,14 @@ const INPUT_LABEL: Record<string, string> = {
   params: 'Design parameters',
   packMassG: 'Pack mass',
   outer: 'Outer size',
+  innerH: 'Inner height',
   clearance: 'Fit of the contents',
+  layers: 'Layers of contents',
   cells: 'Cell layout',
   produce: 'Brief: produce',
   fragility: 'Brief: fragility',
   unitWeightG: 'Brief: unit weight',
+  unit: 'Brief: unit size',
   units: 'Brief: units per pack',
   coldChain: 'Brief: cold chain',
   humidityMaxPct: 'Brief: humidity',
@@ -122,11 +145,18 @@ export function staleReasons(prev: RunMeta, cur: RunMeta): string[] {
     const stage = k.includes('.') ? `${k.split('.')[0]}: ` : ''
     out.push(`${stage.charAt(0).toUpperCase()}${stage.slice(1)}${stage ? label.toLowerCase() : label} ${String(a[k])}${unit} → ${String(b[k])}${unit}`)
   }
-  if (prev.versionId === cur.versionId)
-    for (const k of Object.keys(INPUT_LABEL)) {
-      if (stableStringify((prev.inputs as Record<string, unknown>)[k]) !== stableStringify((cur.inputs as Record<string, unknown>)[k])) out.push(`${INPUT_LABEL[k]} changed`)
-    }
+  if (prev.versionId === cur.versionId) out.push(...inputChanges(prev.inputs, cur.inputs))
   return out.length ? out : ['Inputs changed']
+}
+
+/** Relevant inputs that differ between two snapshots, in plain words. */
+export function inputChanges(prev: RunInputs | undefined, cur: RunInputs): string[] {
+  if (!prev) return []
+  const p = prev as Record<string, unknown>
+  const c = cur as Record<string, unknown>
+  return Object.keys(INPUT_LABEL)
+    .filter((k) => k in c && stableStringify(p[k]) !== stableStringify(c[k]))
+    .map((k) => `${INPUT_LABEL[k]} changed`)
 }
 
 /* ------------------------------------------------------------------ persisted run records */
@@ -140,6 +170,8 @@ export interface RunRecord {
   versionId: string
   versionN: number
   settings: RunSettings
+  /** Snapshot of the inputs the model read (absent on records from before sims-4). */
+  inputs?: RunInputs
   modelVersion: string
   at: string
   risk: Risk
@@ -151,7 +183,7 @@ export const MAX_RUNS = 40
 export const slim = (r: SimResult): SlimResult => ({ test: r.test, method: r.method, headline: r.headline, risk: r.risk, metrics: r.metrics, concerns: r.concerns, failureModes: r.failureModes, assumptions: r.assumptions })
 
 export function toRecord(meta: RunMeta, results: SimResult[], risk: Risk, id: string): RunRecord {
-  return { id, key: meta.key, test: meta.test, versionId: meta.versionId, versionN: meta.versionN, settings: meta.settings, modelVersion: meta.modelVersion, at: meta.at, risk, results: results.map(slim) }
+  return { id, key: meta.key, test: meta.test, versionId: meta.versionId, versionN: meta.versionN, settings: meta.settings, inputs: meta.inputs, modelVersion: meta.modelVersion, at: meta.at, risk, results: results.map(slim) }
 }
 
 /** Newest first, de-duplicated by key (re-running identical inputs replaces the older record), capped. */
@@ -173,7 +205,10 @@ export function runsForVersion(runs: RunRecord[] | undefined, version: Pick<Desi
     .filter((r) => r.versionId === version.id)
     .map((run): RunStatus => {
       if (run.modelVersion !== SIM_MODEL_VERSION) return { run, status: 'superseded', reason: `Computed with model ${run.modelVersion}; current model is ${SIM_MODEL_VERSION}.` }
-      if (runKey(run.test, version.id, ctx, run.settings) !== run.key) return { run, status: 'superseded', reason: 'The brief or derived inputs changed after this run.' }
+      if (runKey(run.test, version.id, ctx, run.settings) !== run.key) {
+        const changed = inputChanges(run.inputs, ctxInputs(ctx, run.test))
+        return { run, status: 'superseded', reason: changed.length ? `${changed.join('; ')} after this run.` : 'The brief or derived inputs changed after this run.' }
+      }
       return { run, status: 'matches' }
     })
 }

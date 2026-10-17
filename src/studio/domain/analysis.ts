@@ -26,6 +26,7 @@ export function analyse(params: DesignParams, brief: ProductBrief, assumptions: 
     produce: brief.identification.produce,
     fragility: brief.identification.fragility,
     unitWeightG: brief.identification.unitWeightG,
+    unit: brief.identification.unitDims,
     units: brief.identification.unitsPerPackage,
     coldChain: brief.metadata.coldChain,
     humidityMaxPct: brief.metadata.humidityMaxPct,

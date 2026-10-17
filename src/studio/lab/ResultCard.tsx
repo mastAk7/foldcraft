@@ -125,14 +125,17 @@ export function ResultCard({ result, onApply, compact, conditions, stale }: { re
         <Disclosure label="All metrics & rule flags">
           <dl className="divide-y divide-line">
             {result.metrics.map((x) => (
-              <div key={x.key} className="flex items-center justify-between gap-2 py-1.5">
-                <dt>{x.label}</dt>
-                <dd className="flex items-center gap-1.5 tabular-nums">
-                  <strong>
-                    {fmt(x.value, x.digits ?? 1)} {x.unit}
-                  </strong>
-                  <span title={x.method === 'calculated' ? 'Calculated' : 'Model output'} className={`inline-block h-2 w-2 rounded-[2px] ${x.method === 'calculated' ? 'bg-frost' : x.method === 'simplified_estimate' ? 'bg-amber' : 'bg-clay'}`} aria-hidden />
-                </dd>
+              <div key={x.key} className="py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <dt>{x.label}</dt>
+                  <dd className="flex items-center gap-1.5 tabular-nums">
+                    <strong>
+                      {fmt(x.value, x.digits ?? 1)} {x.unit}
+                    </strong>
+                    <span title={x.method === 'calculated' ? 'Calculated' : x.method === 'simplified_estimate' ? 'Estimate from assumed data' : 'Model output'} className={`inline-block h-2 w-2 rounded-[2px] ${x.method === 'calculated' ? 'bg-frost' : x.method === 'simplified_estimate' ? 'bg-amber' : 'bg-clay'}`} aria-hidden />
+                  </dd>
+                </div>
+                {x.basis && <p className="mt-0.5 text-[11px] leading-snug text-ink-3">How: {x.basis}</p>}
               </div>
             ))}
           </dl>

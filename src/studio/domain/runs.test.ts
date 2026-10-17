@@ -25,13 +25,46 @@ describe('run identity', () => {
       runKey('drop', 'v1', a.ctx, { heightCm: 60, orientation: 'corner' }),
       runKey('drop', 'v1', a.ctx, { heightCm: 80, orientation: 'side' }),
       runKey('drop', 'v2', a.ctx, { heightCm: 80, orientation: 'corner' }),
-      runKey('drop', 'v1', analyse(p, { ...brief, requirements: { ...brief.requirements, transport: 'long_haul' } }).ctx, { heightCm: 80, orientation: 'corner' }),
+      runKey('drop', 'v1', analyse(p, { ...brief, identification: { ...brief.identification, unitWeightG: brief.identification.unitWeightG + 5 } }).ctx, { heightCm: 80, orientation: 'corner' }),
       runKey('drop', 'v1', a.ctx, { heightCm: 80, orientation: 'corner' }, 'sims-old'),
     ]
     for (const k of keys) expect(k).not.toBe(base)
     expect(runKey('stack', 'v1', a.ctx, { layers: 5, offsetMm: 0 })).not.toBe(runKey('stack', 'v1', a.ctx, { layers: 5, offsetMm: 10 }))
     expect(runKey('stack', 'v1', a.ctx, { layers: 5, offsetMm: 0 })).not.toBe(runKey('stack', 'v1', a.ctx, { layers: 6, offsetMm: 0 }))
     expect(runKey('vibration', 'v1', a.ctx, { profile: 'smooth', durationS: 3 })).not.toBe(runKey('vibration', 'v1', a.ctx, { profile: 'rough', durationS: 3 }))
+  })
+
+  it('invalidates a run only when an input its model reads changes', () => {
+    const longHaul = analyse(p, { ...brief, requirements: { ...brief.requirements, transport: 'long_haul' } }).ctx
+    const frozen = analyse(p, { ...brief, metadata: { ...brief.metadata, coldChain: 'frozen' } }).ctx
+    const drop = { heightCm: 80, orientation: 'corner' } as const
+    const vibr = { profile: 'rough', durationS: 3 } as const
+    // Transport and cold chain feed only the stack model (safety factor, climate derating).
+    for (const c of [longHaul, frozen]) {
+      expect(runKey('drop', 'v1', c, drop)).toBe(runKey('drop', 'v1', a.ctx, drop))
+      expect(runKey('vibration', 'v1', c, vibr)).toBe(runKey('vibration', 'v1', a.ctx, vibr))
+      expect(runKey('stack', 'v1', c, { layers: 5, offsetMm: 0 })).not.toBe(runKey('stack', 'v1', a.ctx, { layers: 5, offsetMm: 0 }))
+      expect(runKey('break', 'v1', c, breakConditions(c))).not.toBe(runKey('break', 'v1', a.ctx, breakConditions(a.ctx)))
+    }
+    // A storage text change reaches no model at all.
+    const text = analyse(p, { ...brief, metadata: { ...brief.metadata, storageText: 'Keep cool.' } }).ctx
+    for (const t of ['drop', 'stack', 'vibration'] as const) expect(runKey(t, 'v1', text, t === 'drop' ? drop : t === 'stack' ? { layers: 5, offsetMm: 0 } : vibr)).toBe(runKey(t, 'v1', a.ctx, t === 'drop' ? drop : t === 'stack' ? { layers: 5, offsetMm: 0 } : vibr))
+    // Unit weight feeds all three.
+    const heavier = analyse(p, { ...brief, identification: { ...brief.identification, unitWeightG: brief.identification.unitWeightG * 2 } }).ctx
+    expect(runKey('drop', 'v1', heavier, drop)).not.toBe(runKey('drop', 'v1', a.ctx, drop))
+    expect(runKey('stack', 'v1', heavier, { layers: 5, offsetMm: 0 })).not.toBe(runKey('stack', 'v1', a.ctx, { layers: 5, offsetMm: 0 }))
+  })
+
+  it('stored runs keep their input snapshot and name what changed since', () => {
+    const meta = makeMeta('drop', v1, a.ctx, { heightCm: 80, orientation: 'bottom' })
+    const rec = toRecord(meta, [runDrop(a.ctx, { heightCm: 80, orientation: 'bottom' }).result], 'low', 'r1')
+    expect(rec.inputs).toEqual(meta.inputs)
+    expect((rec.inputs as { unitWeightG: number }).unitWeightG).toBe(brief.identification.unitWeightG)
+    const heavier = analyse(p, { ...brief, identification: { ...brief.identification, unitWeightG: brief.identification.unitWeightG * 2 } }).ctx
+    const [st] = runsForVersion([rec], { id: 'v1' }, heavier)
+    expect(st.status).toBe('superseded')
+    expect(st.status === 'superseded' && st.reason).toMatch(/unit weight changed/)
+    expect(runsForVersion([rec], { id: 'v1' }, a.ctx)[0].status).toBe('matches')
   })
 
   it('ignores price assumptions, which no simulation reads', () => {
@@ -146,6 +179,9 @@ describe('break my design sequence', () => {
     expect(stopped.stage).toBe('interrupted')
     expect(stopped.interruptedAt).toBe('drop')
     expect(breakReducer(stopped, { type: 'stageComplete', stage: 'drop' }).stage).toBe('interrupted')
+    // Replay keeps the configuration the sequence was computed with, not the changed inputs.
+    expect(stopped.ctx).toBe(running.ctx)
+    expect(breakReducer(sum, { type: 'inputsChanged', key: 'other' }).ctx).toBe(sum.ctx)
   })
 })
 

@@ -4,7 +4,8 @@ import type { Analysis } from './analysis'
 import { FILMS, MATERIALS } from './materials'
 import { TEMPLATE_INFO } from './params'
 import { PRODUCE } from './produce'
-import type { BreakReport } from './sims'
+import { describeSettings } from './runs'
+import { SIM_MODEL_VERSION, type BreakReport } from './sims'
 import type { Batch, BriefCategory, DesignParams, MaterialId, ProductBrief, Risk, TemplateId } from './types'
 
 /**
@@ -119,7 +120,8 @@ export interface PassportSummary {
   wallMm: number
   massG: number
   perPack: number
-  tests: { test: string; risk: Risk; headline: string; method: string }[]
+  /** Model estimates computed from the design when the record was published, not recorded Simulation Lab runs. */
+  tests: { test: string; risk: Risk; headline: string; method: string; basis: 'estimate_at_publish'; modelVersion: string; conditions: string }[]
 }
 
 export function passportSummary(params: DesignParams, a: Analysis, report?: BreakReport): PassportSummary {
@@ -131,7 +133,7 @@ export function passportSummary(params: DesignParams, a: Analysis, report?: Brea
     massG: a.cost.massG,
     perPack: a.cost.perPack,
     tests: report
-      ? [report.drop.result, report.stack.result, report.vibration.result].map((r) => ({ test: r.test, risk: r.risk, headline: r.headline, method: r.method }))
+      ? [report.drop.result, report.stack.result, report.vibration.result].map((r) => ({ test: r.test, risk: r.risk, headline: r.headline, method: r.method, basis: 'estimate_at_publish' as const, modelVersion: SIM_MODEL_VERSION, conditions: describeSettings(r.test, report.conditions[r.test]) }))
       : [],
   }
 }

@@ -183,7 +183,7 @@ export default function PassportView({ project }: { project: Project }) {
                 </div>
               </div>
             </div>
-            <h4 className="eyebrow mb-1 mt-4">Simulation summary (Break my design conditions)</h4>
+            <h4 className="eyebrow mb-1 mt-4">Model estimates for this design (computed now under Break-my-design conditions, not a recorded test run)</h4>
             <div className="grid gap-2 sm:grid-cols-3">
               {[report.drop.result, report.stack.result, report.vibration.result].map((r) => (
                 <div key={r.test} className="rounded-xl border border-line bg-white p-2.5">

@@ -282,6 +282,8 @@ export interface Metric {
   unit: string
   digits?: number
   method: ResultMethod
+  /** How the value is obtained, in plain words (equation or model output). */
+  basis?: string
 }
 
 export interface MaterialAssumption {
@@ -348,26 +350,29 @@ export interface SimResult {
   limitations: string[]
 }
 
+/** Model traces are SI (m, s, m/s²); the UI converts for display. */
 export interface DropTrace {
   /** seconds since release */
   t: number[]
-  /** package height of lowest point above ground, mm */
+  /** height of the package's lowest point above the floor, m (negative while the floor contact is compressed) */
   y: number[]
-  /** product displacement relative to package along impact axis, mm (positive = towards impact face) */
+  /** unit displacement relative to the package along the impact axis, m (positive = towards the impact face) */
   rel: number[]
-  /** package deceleration from floor contact, g */
+  /** package deceleration from the floor contact, m/s² */
   acc: number[]
-  /** unit contact at this sample: 0 none, 1 pressed on its support, 2 against the lid */
+  /** net support force on the tracked unit ÷ its mass, m/s² (positive = pushed away from the impact face) */
+  unitAcc: number[]
+  /** unit contact at this sample: 0 none, 1 pressed on its support, 2 against the opposite boundary (lid/wall) */
   contact: number[]
   impactIndex: number
 }
 
 export interface VibrationTrace {
   t: number[]
-  /** vertical and lateral base (deck) displacement, mm */
+  /** vertical and lateral (package x) deck displacement, m */
   base: number[]
   baseLat: number[]
-  /** product relative x and y (mm) inside its cell */
+  /** unit displacement inside its cell, m: lateral (package x) from the cell centre, and lift above its resting contact */
   px: number[]
   py: number[]
   /** contacts since the previous sample, bit mask: 1 wall (+x), 2 wall (−x), 4 lid, 8 airborne */

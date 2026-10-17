@@ -37,7 +37,11 @@ function plateGeometry(pl: Plate): THREE.BufferGeometry {
   g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 16 })
   g.translate(0, 0, -depth / 2)
   g.computeVertexNormals()
-  if (geoCache.size > 600) geoCache.clear()
+  if (geoCache.size > 600) {
+    // Release GPU buffers before dropping the cache; geometry still in use is re-uploaded on its next draw.
+    geoCache.forEach((x) => x.dispose())
+    geoCache.clear()
+  }
   geoCache.set(key, g)
   return g
 }
@@ -96,11 +100,16 @@ export function PackageModel({ pkg, params, flags }: { pkg: BuiltPackage; params
 function PlateMesh({ plate, geometry, matrix, material, explode }: { plate: Plate; geometry: THREE.BufferGeometry; matrix: THREE.Matrix4; material: THREE.Material; explode: number }) {
   const ref = useRef<THREE.Group>(null)
   const current = useRef(explode)
+  const applied = useRef(Number.NaN)
   const offset = 0.55
   useFrame((_, dt) => {
     const g = ref.current
     if (!g) return
-    current.current += (explode - current.current) * Math.min(1, dt * 8)
+    if (Math.abs(explode - current.current) < 1e-4) current.current = explode
+    else current.current += (explode - current.current) * Math.min(1, dt * 8)
+    // Settled: nothing to write this frame.
+    if (current.current === applied.current) return
+    applied.current = current.current
     const e = current.current
     g.position.set(plate.explode[0] * e * offset, plate.explode[1] * e * offset, plate.explode[2] * e * offset)
   })
@@ -112,6 +121,9 @@ function PlateMesh({ plate, geometry, matrix, material, explode }: { plate: Plat
 }
 
 /* ---------------------------------------------------------------- produce */
+
+/** One unit cube shared by every produce part; each mesh scales it. */
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1)
 
 /** Voxel representations of produce, sized to the brief's unit dimensions. Representative only. */
 export function ProduceUnit({ kind, unit, highlight }: { kind: ProduceKind; unit: Dims; highlight?: boolean }) {
@@ -128,31 +140,19 @@ export function ProduceUnit({ kind, unit, highlight }: { kind: ProduceKind; unit
     return (
       <group>
         {cubes.map(([x, y, z], i) => (
-          <mesh key={i} position={[x, y, z]} material={i % 3 ? body : light}>
-            <boxGeometry args={[l * 0.22, h * 0.42, w * 0.28]} />
-          </mesh>
+          <mesh key={i} geometry={UNIT_BOX} position={[x, y, z]} scale={[l * 0.22, h * 0.42, w * 0.28]} material={i % 3 ? body : light} castShadow={i === 0} />
         ))}
-        <mesh position={[-l * 0.45, h * 0.3, 0]} material={top}>
-          <boxGeometry args={[l * 0.12, h * 0.15, w * 0.08]} />
-        </mesh>
+        <mesh geometry={UNIT_BOX} position={[-l * 0.45, h * 0.3, 0]} scale={[l * 0.12, h * 0.15, w * 0.08]} material={top} />
       </group>
     )
   }
   return (
     <group>
-      <mesh material={body} castShadow>
-        <boxGeometry args={[l * 0.86, h * 0.8, w * 0.86]} />
-      </mesh>
+      <mesh geometry={UNIT_BOX} scale={[l * 0.86, h * 0.8, w * 0.86]} material={body} castShadow />
       {/* A taller, narrower block on the same body gives a chunky rounded silhouette. */}
-      <mesh material={body}>
-        <boxGeometry args={[l * 0.66, h * 0.96, w * 0.66]} />
-      </mesh>
-      <mesh position={[l * 0.18, h * 0.2, w * 0.18]} material={light}>
-        <boxGeometry args={[l * 0.16, h * 0.16, w * 0.16]} />
-      </mesh>
-      <mesh position={[0, h * 0.44, 0]} material={top}>
-        <boxGeometry args={[kind === 'strawberry' ? l * 0.5 : l * 0.12, h * 0.1, kind === 'strawberry' ? w * 0.5 : w * 0.12]} />
-      </mesh>
+      <mesh geometry={UNIT_BOX} scale={[l * 0.66, h * 0.96, w * 0.66]} material={body} />
+      <mesh geometry={UNIT_BOX} position={[l * 0.18, h * 0.2, w * 0.18]} scale={[l * 0.16, h * 0.16, w * 0.16]} material={light} />
+      <mesh geometry={UNIT_BOX} position={[0, h * 0.44, 0]} scale={[kind === 'strawberry' ? l * 0.5 : l * 0.12, h * 0.1, kind === 'strawberry' ? w * 0.5 : w * 0.12]} material={top} />
     </group>
   )
 }

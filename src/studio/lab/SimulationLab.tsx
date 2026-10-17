@@ -6,12 +6,13 @@ import { breakReducer, initialBreak, STAGE_LABEL, STAGES, stageMessage, type Bre
 import { applyPatch, validateParams } from '../domain/params'
 import { uid } from '../domain/project'
 import { describeSettings, makeMeta, slim, staleReasons, toRecord, type RunMeta, type RunSettings, type RunTest } from '../domain/runs'
-import { breakConditions, PROFILE_LABEL, profileSpec, runDrop, runStack, runVibration, SIM_MODEL_VERSION, type BreakConditions, type BreakReport, type DropOutput, type SimContext, type StackOutput, type VibrationOutput } from '../domain/sims'
+import { breakConditions, PROFILE_LABEL, profileSpec, runDrop, runStack, runVibration, SIM_MODEL_VERSION, validateSimInputs, type BreakConditions, type BreakReport, type DropOutput, type SimContext, type StackOutput, type VibrationOutput } from '../domain/sims'
 import type { DesignVersion, DropOrientation, DropSettings, Project, Risk, SimResult, SimTest, StackSettings, Suggestion, VibrationProfile, VibrationSettings } from '../domain/types'
 import { useStudio } from '../store'
 import { S } from '../three/PackageModel'
 import { StudioCanvas } from '../three/StudioCanvas'
 import { Callout, GroupTitle, NumberField, RiskChip, Segmented } from '../ui'
+import { mToMm, toG } from '../domain/units'
 import { useMediaQuery, useNarrow } from '../useNarrow'
 import { BeforeAfter, ResultCard, type Snapshot } from './ResultCard'
 import { DROP_SPEED, DropScene, MAG, prefersReducedMotion, StackScene, utilColor, VIB_SPEED, VibrationScene } from './scenes'
@@ -22,6 +23,8 @@ type Test = SimTest | 'break'
 interface Run<T> {
   out: T
   meta: RunMeta
+  /** The exact context the run was computed with: replays render this, not the current design. */
+  ctx: SimContext
 }
 
 interface Before {
@@ -63,6 +66,8 @@ export default function SimulationLab({ project }: { project: Project }) {
   const [cfgOpen, setCfgOpen] = useState<boolean | null>(null)
   const [resOpen, setResOpen] = useState<boolean | null>(null)
   const [notesOpen, setNotesOpen] = useState(false)
+  const [exaggerate, setExaggerate] = useState(false)
+  const [simError, setSimError] = useState<string | null>(null)
   const clock = useMemo(makeClock, [])
   const reduced = prefersReducedMotion()
 
@@ -92,29 +97,45 @@ export default function SimulationLab({ project }: { project: Project }) {
     recordRun(project.id, toRecord(brk.meta, [r.drop.result, r.stack.result, r.vibration.result], r.risk, uid()))
   }, [brk.stage, brk.report, brk.meta, project.id, recordRun])
 
-  const runSingle = (t: SimTest, c: SimContext = ctx, v: Pick<DesignVersion, 'id' | 'n'> = version, s: RunSettings = live.settings[t]): SimResult => {
+  const runSingle = (t: SimTest, c: SimContext = ctx, v: Pick<DesignVersion, 'id' | 'n'> = version, s: RunSettings = live.settings[t]): SimResult | null => {
     const meta = makeMeta(t, v, c, s)
     let result: SimResult
-    if (t === 'drop') {
-      const out = runDrop(c, s as DropSettings)
-      setDrop({ out, meta })
-      result = out.result
-    } else if (t === 'stack') {
-      const out = runStack(c, s as StackSettings)
-      setStack({ out, meta })
-      result = out.result
-    } else {
-      const out = runVibration(c, s as VibrationSettings)
-      setVib({ out, meta })
-      setVibCompare(null)
-      result = out.result
+    try {
+      if (t === 'drop') {
+        const out = runDrop(c, s as DropSettings)
+        setDrop({ out, meta, ctx: c })
+        result = out.result
+      } else if (t === 'stack') {
+        const out = runStack(c, s as StackSettings)
+        setStack({ out, meta, ctx: c })
+        result = out.result
+      } else {
+        const out = runVibration(c, s as VibrationSettings)
+        setVib({ out, meta, ctx: c })
+        setVibCompare(null)
+        result = out.result
+      }
+    } catch (e) {
+      // Invalid inputs are reported, never simulated.
+      setSimError(e instanceof RangeError ? e.message : 'The simulation could not run with these inputs.')
+      return null
     }
+    setSimError(null)
     recordRun(project.id, toRecord(meta, [result], result.risk, uid()))
     setRunId((r) => r + 1)
     return result
   }
 
-  const startBreak = (c: SimContext = ctx, v: Pick<DesignVersion, 'id' | 'n'> = version, cond: BreakConditions = conditions) => dispatch({ type: 'start', ctx: c, meta: makeMeta('break', v, c, cond), conditions: cond })
+  const startBreak = (c: SimContext = ctx, v: Pick<DesignVersion, 'id' | 'n'> = version, cond: BreakConditions = conditions) => {
+    try {
+      validateSimInputs(c)
+    } catch (e) {
+      setSimError(e instanceof RangeError ? e.message : 'The simulation could not run with these inputs.')
+      return
+    }
+    setSimError(null)
+    dispatch({ type: 'start', ctx: c, meta: makeMeta('break', v, c, cond), conditions: cond })
+  }
 
   const syncSettings = (t: RunTest, s: RunSettings) => {
     if (t === 'drop') {
@@ -158,8 +179,12 @@ export default function SimulationLab({ project }: { project: Project }) {
         const key = JSON.stringify(params)
         if (seen.has(key) || validateParams(params).length) return null
         seen.add(key)
-        const r = runVibration(analyse(params, project.brief, project.assumptions).ctx, vs)
-        return { label: v.label, risk: r.result.risk, travel: r.result.metrics.find((m) => m.key === 'travel')!.value }
+        try {
+          const r = runVibration(analyse(params, project.brief, project.assumptions).ctx, vs)
+          return { label: v.label, risk: r.result.risk, travel: r.result.metrics.find((m) => m.key === 'travel')!.value }
+        } catch {
+          return null
+        }
       })
       .filter((x): x is { label: string; risk: Risk; travel: number } => !!x)
     setVibCompare({ key: live.meta.vibration.key, rows })
@@ -169,30 +194,33 @@ export default function SimulationLab({ project }: { project: Project }) {
 
   const running = shown.stage === 'drop' || shown.stage === 'stack' || shown.stage === 'vibration'
   const view: SimTest | null = test === 'break' ? (shown.stage === 'idle' ? null : shown.view) : test
-  const dropRun = test === 'break' ? (shown.drop && shown.conditions ? { out: shown.drop, settings: shown.conditions.drop } : null) : drop && { out: drop.out, settings: drop.meta.settings as DropSettings }
-  const stackRun = test === 'break' ? (shown.stack && shown.conditions ? { out: shown.stack, settings: shown.conditions.stack } : null) : stack && { out: stack.out, settings: stack.meta.settings as StackSettings }
-  const vibRun = test === 'break' ? (shown.vibration && shown.conditions ? { out: shown.vibration, settings: shown.conditions.vibration } : null) : vib && { out: vib.out, settings: vib.meta.settings as VibrationSettings }
+  // Replays always use the configuration that produced the run (its own geometry, contents and settings), never the current design.
+  const runCtx = test === 'break' ? shown.ctx : null
+  const dropRun = test === 'break' ? (shown.drop && shown.conditions && runCtx ? { out: shown.drop, settings: shown.conditions.drop, ctx: runCtx } : null) : drop && { out: drop.out, settings: drop.meta.settings as DropSettings, ctx: drop.ctx }
+  const stackRun = test === 'break' ? (shown.stack && shown.conditions && runCtx ? { out: shown.stack, settings: shown.conditions.stack, ctx: runCtx } : null) : stack && { out: stack.out, settings: stack.meta.settings as StackSettings, ctx: stack.ctx }
+  const vibRun = test === 'break' ? (shown.vibration && shown.conditions && runCtx ? { out: shown.vibration, settings: shown.conditions.vibration, ctx: runCtx } : null) : vib && { out: vib.out, settings: vib.meta.settings as VibrationSettings, ctx: vib.ctx }
   const sceneRun = test === 'break' ? shown.replay : runId
   const complete = (st: SimTest) => () => {
     if (test === 'break' && shown.stage === st && !reduced) dispatch({ type: 'stageComplete', stage: st })
   }
-  const kind = project.brief.identification.produce
-  const unit = project.brief.identification.unitDims
-  const o = analysis.pkg.outer
-  const ext = Math.max(o.l, o.w)
+  const shownMeta = test === 'break' ? shown.meta : test === 'drop' ? drop?.meta : test === 'stack' ? stack?.meta : vib?.meta
+  const replayingOld = !!shownMeta && staleReasons(shownMeta, live.meta[test]).length > 0
 
   let scene: ReactNode = null
   let sceneKey = 'none'
-  let sizeMm = ext * 1.6
+  let sizeMm = Math.max(analysis.pkg.outer.l, analysis.pkg.outer.w) * 1.6
   let centerY = 0.3
   let timeline: ReactNode = null
   let legend: ReactNode = null
+  let banner: ReactNode = null
   const chips: { text: string; tone?: 'warn' }[] = []
   if (view === 'drop' && dropRun) {
-    const { out, settings } = dropRun
-    scene = <DropScene pkg={analysis.pkg} params={version.params} kind={kind} unit={unit} trace={out.trace} orientation={settings.orientation} heightCm={settings.heightCm} runId={sceneRun} clock={clock} onComplete={complete('drop')} />
+    const { out, settings, ctx: rc } = dropRun
+    const o = rc.pkg.outer
+    const sens = out.result.metrics.find((m) => m.key === 'threshold')?.value ?? 150
+    scene = <DropScene pkg={rc.pkg} params={rc.params} kind={rc.produce} unit={rc.unit} trace={out.trace} orientation={settings.orientation} heightCm={settings.heightCm} sensitivityG={sens} runId={sceneRun} clock={clock} onComplete={complete('drop')} />
     sceneKey = `drop-${settings.heightCm}-${settings.orientation}`
-    sizeMm = Math.max(ext * 1.6, settings.heightCm * 10 + o.h)
+    sizeMm = Math.max(Math.max(o.l, o.w) * 1.6, settings.heightCm * 10 + o.h)
     centerY = (settings.heightCm * 10 + o.h) * S * 0.5
     const tr = out.trace
     timeline = (
@@ -200,24 +228,35 @@ export default function SimulationLab({ project }: { project: Project }) {
         t={tr.t}
         clock={clock}
         series={[
-          { label: 'Pack height', unit: 'mm', color: '#2f78b7', values: tr.y, digits: 0 },
-          { label: 'Unit vs pack', unit: 'mm', color: '#c4613b', values: tr.rel, digits: 1 },
-          { label: 'Pack decel.', unit: 'g', color: '#c23b55', values: tr.acc, digits: 0 },
+          { label: 'Pack height', unit: 'mm', color: '#2f78b7', values: tr.y.map(mToMm), digits: 1 },
+          { label: 'Unit vs pack', unit: 'mm', color: '#c4613b', values: tr.rel.map(mToMm), digits: 1 },
+          { label: 'Unit decel.', unit: 'g', color: '#c23b55', values: tr.unitAcc.map(toG), digits: 0 },
         ]}
         markers={[{ t: tr.t[tr.impactIndex] ?? 0, label: 'Floor contact' }]}
-        note={`Slow motion ×${DROP_SPEED.impact} around contact`}
+        note={`Model time · playback ${DROP_SPEED.fall * 100}% in free fall, easing to ${DROP_SPEED.impact * 100}% around contact`}
       />
     )
-    chips.push({ text: `Grey post = release height ${settings.heightCm} cm` }, { text: `Fall at ${DROP_SPEED.fall * 100}% speed · ×${DROP_SPEED.impact} slow motion at contact` }, { text: `Unit movement inside the pack magnified ×${MAG}` }, { text: 'Deformation is a few mm and drawn at true scale' }, { text: 'Held in test orientation; rotation during the fall is not modelled' })
-    if (settings.orientation !== 'bottom') chips.push({ text: 'Tip onto the base after the trace: illustrative, not modelled', tone: 'warn' })
+    chips.push(
+      { text: `Grey post = release height ${settings.heightCm} cm` },
+      { text: 'All motion and deformation at true scale (deformation is a few mm, drawn as compression of the pack)' },
+      { text: `Floor ring = unit deceleration ÷ assumed ${sens.toFixed(0)} g sensitivity (green <80%, amber <120%, red above)` },
+      { text: 'Held in test orientation during the fall; rotation in flight is not modelled' },
+    )
+    if (settings.orientation === 'corner') chips.push({ text: 'After the impact: rigid-box topple onto the face the centre of mass selects (contents held, no bounce)', tone: 'warn' })
   } else if (view === 'stack' && stackRun) {
-    const { out, settings } = stackRun
+    const { out, settings, ctx: rc } = stackRun
+    const o = rc.pkg.outer
     const n = out.layers.length
-    scene = <StackScene pkg={analysis.pkg} params={version.params} layers={out.layers} supportHalfMm={out.supportHalfMm} tipMargin={out.tipMargin} runId={sceneRun} onComplete={complete('stack')} />
+    scene = <StackScene pkg={rc.pkg} params={rc.params} layers={out.layers} supportHalfMm={out.supportHalfMm} tipMargin={out.tipMargin} runId={sceneRun} onComplete={complete('stack')} />
     sceneKey = `stack-${n}`
     sizeMm = Math.max(o.l, o.h * n) * 1.15
     centerY = (o.h * n * S) / 2
-    chips.push({ text: 'Placement animation only: no collapse or deformation is simulated' }, { text: 'Colour = share of derated capacity used · arrows = static load on the pack below' })
+    banner = (
+      <div className="pointer-events-none absolute bottom-12 right-2 max-w-[calc(100%-244px)] rounded-lg border border-amber/30 bg-amber-2/95 px-2.5 py-1.5 text-right text-[12px] font-semibold text-amber" role="note">
+        Placement only: nothing here deforms or collapses. Strength is the calculated margin in the results.
+      </div>
+    )
+    chips.push({ text: 'Colour = share of derated capacity used · arrows = static load on the pack below' })
     if (settings.offsetMm > 0) chips.push({ text: 'Red strip = overhang · dashed line = centre of mass of the packs above' })
     if (out.overhangPct > 15) chips.push({ text: `Significant misalignment: offset is ${out.overhangPct.toFixed(0)}% of the footprint`, tone: 'warn' })
     if (out.tipMargin < 0) chips.push({ text: 'Centre of mass outside the support: cannot stand (static check)', tone: 'warn' })
@@ -242,31 +281,38 @@ export default function SimulationLab({ project }: { project: Project }) {
       </div>
     )
   } else if (view === 'vibration' && vibRun) {
-    const { out, settings } = vibRun
+    const { out, settings, ctx: rc } = vibRun
+    const o = rc.pkg.outer
     const tr = out.trace
     const play = out.result.metrics.find((m) => m.key === 'play')?.value ?? 2
     const loop = !(test === 'break' && shown.stage === 'vibration')
-    scene = <VibrationScene pkg={analysis.pkg} params={version.params} kind={kind} unit={unit} trace={tr} runId={sceneRun} playMm={play} loop={loop} clock={clock} onComplete={complete('vibration')} />
+    scene = <VibrationScene pkg={rc.pkg} params={rc.params} kind={rc.produce} unit={rc.unit} trace={tr} runId={sceneRun} playMm={play} exaggerate={exaggerate} loop={loop} clock={clock} onComplete={complete('vibration')} />
     sceneKey = `vib-${settings.profile}`
-    sizeMm = ext * 1.8
+    sizeMm = Math.max(o.l, o.w) * 1.8
     centerY = 0.25
     timeline = (
       <TraceTimeline
         t={tr.t}
         clock={clock}
         series={[
-          { label: 'Deck vertical', unit: 'mm', color: '#8c6c47', values: tr.base, digits: 1 },
-          { label: 'Deck lateral', unit: 'mm', color: '#b8946a', values: tr.baseLat, digits: 1 },
-          { label: 'Unit lift', unit: 'mm', color: '#2f78b7', values: tr.py, digits: 1 },
-          { label: 'Unit slide', unit: 'mm', color: '#c4613b', values: tr.px, digits: 1 },
+          { label: 'Deck vertical', unit: 'mm', color: '#8c6c47', values: tr.base.map(mToMm), digits: 2 },
+          { label: 'Deck lateral', unit: 'mm', color: '#b8946a', values: tr.baseLat.map(mToMm), digits: 2 },
+          { label: 'Unit lift', unit: 'mm', color: '#2f78b7', values: tr.py.map(mToMm), digits: 2 },
+          { label: 'Unit slide', unit: 'mm', color: '#c4613b', values: tr.px.map(mToMm), digits: 2 },
         ]}
         ticks={tr.contact.map((b) => (b & 7 ? 1 : 0))}
         tickLabel="Wall/lid contact"
         note={`${PROFILE_LABEL[settings.profile]}: ${profileSpec(settings.profile)}`}
       />
     )
-    chips.push({ text: `Deck and unit motion magnified ×${MAG} · ${VIB_SPEED * 100}% speed` }, { text: 'Flashes = wall/lid contact recorded by the model · blue outline = unit airborne' }, { text: 'Package rotation is not modelled' })
+    chips.push(
+      exaggerate ? { text: `Deck displacement exaggerated ×${MAG} (the whole pack moves with it); values below are true`, tone: 'warn' } : { text: 'True scale: deck motion is 1–3 mm' },
+      { text: `Unit motion inside the pack at true scale · ${VIB_SPEED * 100}% speed` },
+      { text: 'Flashes = wall/lid contact recorded by the model · blue outline = unit airborne' },
+      { text: 'Package rotation is not modelled' },
+    )
   }
+  if (scene && replayingOld) chips.unshift({ text: `Replaying the saved v${shownMeta!.versionN} run with its own geometry and inputs; the current design differs`, tone: 'warn' })
 
   /* ------------------------------------------------------------ panels */
 
@@ -303,8 +349,12 @@ export default function SimulationLab({ project }: { project: Project }) {
           <div className="mb-1 mt-2 text-[13px] font-semibold text-ink-2">Transport profile</div>
           <Segmented<VibrationProfile> label="Transport profile" size="sm" value={profile} onChange={setProfile} options={[{ id: 'smooth', label: 'Smooth' }, { id: 'normal', label: 'Normal' }, { id: 'rough', label: 'Rough' }]} />
           <p className="mt-1 text-[11.5px] text-ink-3">
-            {PROFILE_LABEL[profile]}: {profileSpec(profile)}. Fixed random seed, so comparisons repeat exactly.
+            {PROFILE_LABEL[profile]}: {profileSpec(profile)}. Peak acceleration of a tone = (2πf)²·A. Fixed random seed, so comparisons repeat exactly.
           </p>
+          <label className="mt-2 flex items-start gap-2 text-[12.5px] text-ink-2">
+            <input type="checkbox" className="mt-0.5" checked={exaggerate} onChange={(e) => setExaggerate(e.target.checked)} />
+            <span>Exaggerate deck motion ×{MAG} in the scene (display only; results and readouts stay true)</span>
+          </label>
         </>
       )}
       {test === 'break' ? (
@@ -324,6 +374,11 @@ export default function SimulationLab({ project }: { project: Project }) {
         <button type="button" className="btn btn-primary mt-3 w-full" onClick={() => runSingle(test)}>
           <Play size={16} aria-hidden /> {singleMeta && singleReasons.length ? 'Re-run with current settings' : `Run ${test} test`}
         </button>
+      )}
+      {simError && (
+        <div className="mt-2">
+          <Callout tone="warning">{simError}</Callout>
+        </div>
       )}
       {test === 'vibration' && vib && !singleReasons.length && (
         <button type="button" className="btn btn-sm mt-2 h-auto w-full whitespace-normal py-1.5" onClick={compareArrangements}>
@@ -447,13 +502,11 @@ export default function SimulationLab({ project }: { project: Project }) {
     <div className="flex h-full min-h-[280px] flex-col">
       {stepper}
       <div className="relative min-h-0 flex-1">
-        {scene ? (
-          <StudioCanvas key={`${sceneKey}-${version.id}`} sizeMm={sizeMm} label="Simulation scene" centerY={centerY}>
-            {scene}
-          </StudioCanvas>
-        ) : (
-          <div className="studio-blueprint grid h-full place-items-center p-6 text-center text-[13px] text-ink-2">Run a test to see it here.</div>
-        )}
+        {/* One canvas (one WebGL context) for the whole lab; scenes swap inside it and the camera re-frames. */}
+        <StudioCanvas sizeMm={sizeMm} label="Simulation scene" centerY={centerY} resetKey={frameKey(`${sceneKey}-${version.id}`)}>
+          <group key={`${sceneKey}-${version.id}`}>{scene}</group>
+        </StudioCanvas>
+        {!scene && <div className="studio-blueprint pointer-events-none absolute inset-0 grid place-items-center p-6 text-center text-[13px] text-ink-2">Run a test to see it here.</div>}
         {scene && (
           <div className="pointer-events-none absolute inset-x-2 top-2 flex flex-wrap gap-1.5 pr-24">
             <span className="chip border-clay/25 bg-white/90 text-clay">Animation of the simplified model</span>
@@ -470,6 +523,7 @@ export default function SimulationLab({ project }: { project: Project }) {
           </div>
         )}
         {scene && legend}
+        {scene && banner}
         <div className="absolute right-2 top-2 flex gap-1">
           {!narrow && (
             <button
@@ -532,6 +586,13 @@ export default function SimulationLab({ project }: { project: Project }) {
       )}
     </div>
   )
+}
+
+/** Non-zero number that changes with the scene identity: re-frames the camera without remounting the canvas. */
+function frameKey(id: string) {
+  let h = 0x811c9dc5
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193)
+  return (h >>> 0) || 1
 }
 
 function Rail({ side, label, onOpen }: { side: 'left' | 'right'; label: string; onOpen: () => void }) {

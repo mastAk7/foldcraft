@@ -16,10 +16,13 @@ Requires Node.js 20.19+ or 22.12+.
 
 ```bash
 npm install          # install dependencies
-npm run dev          # start the dev server → http://localhost:5173
+npm run dev          # start the dev server → http://localhost:5173 (landing) and /world (consumer app)
 npm run build        # type-check + production build into dist/
 npm run preview      # serve the production build → http://localhost:4173
 ```
+
+**Routes:** `/` is the scroll-driven landing page; `/world` is the consumer app. Both are client-side routes, so a static host
+needs an SPA rewrite (all paths → `index.html`). Vite's dev and preview servers already do this.
 
 Other commands:
 
@@ -32,6 +35,9 @@ npm run dev:host     # dev server reachable from other devices on your network
 
 ## Suggested demo script (≈3 minutes)
 
+0. **Landing (`/`):** scroll to descend: through the cloud sea, over the mountain pass and plains, past the cliff edge into
+   the cut-away strata, a cave where the FoldCraft parcel unfolds into a planter, the lava gallery, and down the waterfall
+   to the island, which blooms as you arrive. **Enter Your World** opens `/world`. Scroll back up to reverse the journey.
 1. **Onboarding:** three short cards, then **Enter demo world** (seeds 9 sample products).
 2. **Explore:** drag to orbit, scroll or pinch to zoom, and use the zone dock (Frostlands = Freezer, Cold Grove = Refrigerator,
    Sunlit Plains = Pantry, Homestead = Counter & arrivals, Circularity Workshop = Reuse & sort). The **grid icon** toggles an
@@ -103,6 +109,21 @@ Producer-supplied data (`ProductRecord`) is kept separate from user state (`Cons
 status and world vitality are **derived** rather than stored. To connect a real backend, implement `ProductSource`
 (`resolveQr`, `get`, `list`) against the producer API. The world and UI don't change.
 
+### Landing page (`src/landing/`)
+
+```
+LandingPage.tsx     page shell: native scrolling track, fixed world, copy layer, gauge, footer, WebGL/crash fallback
+content.ts          the seven stages: copy, scroll ranges, text windows, themes
+journey.ts          one rAF loop: scroll → damped progress → CSS vars / stage index (no per-frame React renders)
+timeline.ts         pure functions of progress: camera spline keyframes, atmosphere keyframes, island bloom
+scene/worldgen.ts   deterministic continent: surface, cut face (strata, caves, lava gallery), underside, props, clouds
+scene/*.tsx         instanced rendering (chunked, frustum-culled, windowed by journey), sky, lights, water, parcel
+```
+
+The final scene reuses the consumer island's own `Terrain` and `Props`; scroll drives `fx.vitality`, which `WorldCanvas`
+resets from saved progress when `/world` mounts. Query flags for testing: `?webgl=0` (fallback), `?tier=low|high`, `?debug`
+(exposes renderer stats). Reduced motion swaps the travelling camera for a composed still per stage.
+
 ## Stack
 
 React 19 · TypeScript · Vite 8 · three.js via @react-three/fiber 9 and @react-three/drei 10 · Tailwind CSS 4 · zustand ·
@@ -114,5 +135,6 @@ motion · lucide-react · jsQR · qrcode · Vitest. All 3D content is generated 
   a tunnel with HTTPS when demoing on a phone.
 - In **dev mode only**, React StrictMode makes drei's `<Html>` labels log “Attempted to synchronously unmount a root…” to the console.
   The production build (`npm run preview`) is clean.
-- The three.js/R3F bundle is ~320 kB gzipped. It is lazy-loaded after the UI shell.
+- The three.js/R3F bundle is ~320 kB gzipped. It is lazy-loaded after the UI shell and shared by the landing page and `/world`.
+- Leaving `/world` with the browser Back button reloads the landing page (drei's `<Html>` labels can't be unmounted in place).
 - Similarity matching in *Before you buy* is keyword/category based and can miss or over-match items.

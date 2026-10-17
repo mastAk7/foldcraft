@@ -25,9 +25,10 @@ export interface ProductDate {
   date: string
 }
 
-export type PackShape = 'bottle' | 'jar' | 'carton' | 'box' | 'bag' | 'pouch' | 'tub' | 'loaf'
+export type PackShape = 'bottle' | 'jar' | 'carton' | 'box' | 'bag' | 'pouch' | 'tub' | 'loaf' | 'punnet' | 'clamshell'
 
 export type Category =
+  | 'Fresh produce'
   | 'Frozen'
   | 'Dairy & alternatives'
   | 'Grains & pasta'
@@ -81,6 +82,8 @@ export interface ProductRecord {
   /** Undefined means the record does not describe its packaging. */
   packaging?: PackagingComponent[]
   handling?: string
+  /** Producer-supplied product photo (data URL). Display only. */
+  image?: string
   source: RecordSource
   /** Shown to make sample data identifiable. */
   sampleNote?: string
@@ -88,7 +91,7 @@ export interface ProductRecord {
 
 export type ItemStatus = 'unopened' | 'opened' | 'finished' | 'discarded' | 'closed'
 
-export type AddMethod = 'qr_camera' | 'qr_image' | 'sample' | 'manual' | 'demo_seed'
+export type AddMethod = 'qr_camera' | 'qr_image' | 'sample' | 'manual' | 'demo_seed' | 'studio_link'
 
 export type ComponentOutcome = 'reused' | 'recycled' | 'composted' | 'returned' | 'disposed'
 

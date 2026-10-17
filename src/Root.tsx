@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useRef } from 'react'
-import { isWorldPath, usePath } from './router'
+import { isStudioPath, isWorldPath, usePath } from './router'
 
 const App = lazy(() => import('./App'))
 const LandingPage = lazy(() => import('./landing/LandingPage'))
+const StudioApp = lazy(() => import('./studio/StudioApp'))
 
 export default function Root() {
   const path = usePath()
   const world = isWorldPath(path)
+  const studio = isStudioPath(path)
   const wasWorld = useRef(world)
 
   // Leaving the consumer world (e.g. browser Back) reloads the page instead of unmounting the app in place:
@@ -18,9 +20,9 @@ export default function Root() {
   }, [leavingWorld, world])
 
   useEffect(() => {
-    document.title = world ? 'Foldcraft · Your product world' : 'FoldCraft · Small choices. Bigger worlds.'
-  }, [world])
+    document.title = world ? 'Foldcraft · Your product world' : studio ? 'FoldCraft · Producer Studio' : 'FoldCraft · Small choices. Bigger worlds.'
+  }, [world, studio])
 
   // Keep the app mounted until the reload takes over.
-  return <Suspense fallback={null}>{world || leavingWorld ? <App /> : <LandingPage />}</Suspense>
+  return <Suspense fallback={null}>{world || leavingWorld ? <App /> : studio ? <StudioApp /> : <LandingPage />}</Suspense>
 }

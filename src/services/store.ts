@@ -17,7 +17,7 @@ import type {
   ZoneId,
 } from '../domain/types'
 import { migrateWorld, safeStorage, sanitizeWorld, STORAGE_KEY, STORAGE_VERSION, type PersistedWorld } from './persistence'
-import { productSource } from './productSource'
+import { catalogueSource } from './productSource'
 
 export type PanelId = 'add' | 'coach' | 'buy' | 'activity' | 'qr' | 'about' | null
 
@@ -92,7 +92,7 @@ export function buildDemoWorld(today = isoDate()): Pick<PersistedWorld, 'items' 
     d.setHours(hour)
     return d.toISOString()
   }
-  const rec = (id: string) => productSource.getSync(id, today)!
+  const rec = (id: string) => catalogueSource.getSync(id, today)!
   const spec: { id: string; actual: ActualLocation; daysAgo: number; patch?: Partial<ConsumerItem> }[] = [
     { id: 'frozen-garden-peas', actual: 'freezer', daysAgo: 12 },
     { id: 'whole-milk-1l', actual: 'counter', daysAgo: 0 },

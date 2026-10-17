@@ -2,14 +2,18 @@ import { CATALOGUE, type CatalogueEntry } from '../data/catalogue'
 import { addDays, isoDate } from '../domain/dates'
 import { parseQrPayload } from '../domain/qr'
 import type { ProductRecord } from '../domain/types'
+import { CompositeSource, registry } from './registry'
+
+export type ResolveOrigin = 'registry' | 'snapshot' | 'catalogue'
 
 export type ResolveResult =
-  | { ok: true; record: ProductRecord }
-  | { ok: false; reason: 'unsupported' | 'not_found' | 'empty'; raw: string }
+  | { ok: true; record: ProductRecord; origin?: ResolveOrigin; recordVersion?: number; note?: string }
+  | { ok: false; reason: 'unsupported' | 'not_found' | 'empty' | 'invalid_snapshot'; raw: string; detail?: string }
 
 /**
- * Where product records come from. Today: a local sample catalogue.
- * Later: a producer API that resolves the same QR payloads. The world never talks to this directly.
+ * Where product records come from: producer-published records (Producer Studio registry), the
+ * snapshot embedded in a QR code, then the local sample catalogue. A producer API could implement
+ * the same interface later. The world never talks to this directly.
  */
 export interface ProductSource {
   resolveQr(payload: string): Promise<ResolveResult>
@@ -38,7 +42,7 @@ export class LocalCatalogueSource implements ProductSource {
     if (!parsed.ok) return { ok: false, reason: parsed.reason, raw: parsed.raw }
     const entry = this.entries.find((e) => e.id === parsed.productId)
     if (!entry) return { ok: false, reason: 'not_found', raw: payload }
-    return { ok: true, record: materialise(entry, isoDate(), parsed.batch) }
+    return { ok: true, record: materialise(entry, isoDate(), parsed.batch), origin: 'catalogue' }
   }
 
   async get(id: string): Promise<ProductRecord | null> {
@@ -58,4 +62,10 @@ export class LocalCatalogueSource implements ProductSource {
   }
 }
 
-export const productSource = new LocalCatalogueSource()
+/** The sample catalogue on its own (used to seed the demo world synchronously). */
+export const catalogueSource = new LocalCatalogueSource()
+
+export const productSource: ProductSource = new CompositeSource(registry, catalogueSource)
+
+/** True when an id is taken by the sample catalogue. */
+export const isCatalogueId = (id: string) => CATALOGUE.some((e) => e.id === id)

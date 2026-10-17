@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { productSource } from '../services/productSource'
+import { catalogueSource, productSource } from '../services/productSource'
 import { migrateWorld, sanitizeWorld } from '../services/persistence'
 import { findSimilar } from './beforeYouBuy'
 import { needsPackagingAction, packagingComponents } from './circularity'
@@ -13,7 +13,7 @@ import type { ConsumerItem, LifecycleEvent } from './types'
 const TODAY = '2026-10-17'
 
 function item(id: string, patch: Partial<ConsumerItem> = {}): ConsumerItem {
-  const record = productSource.getSync(id, TODAY)
+  const record = catalogueSource.getSync(id, TODAY)
   if (!record) throw new Error(`missing ${id}`)
   return { id: `i-${id}`, record, addedAt: `${TODAY}T10:00:00.000Z`, addedVia: 'sample', actual: 'unconfirmed', status: 'unopened', packaging: {}, tasks: {}, ...patch }
 }

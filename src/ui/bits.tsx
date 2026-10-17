@@ -1,5 +1,6 @@
 import {
   Box,
+  Cherry,
   Croissant,
   Cylinder,
   Droplet,
@@ -23,6 +24,8 @@ const SHAPE_ICON: Record<PackShape, LucideIcon> = {
   pouch: Droplet,
   tub: Cylinder,
   loaf: Croissant,
+  punnet: Cherry,
+  clamshell: Cherry,
 }
 
 export function ProductGlyph({ record, size = 40 }: { record: Pick<ProductRecord, 'shape' | 'color' | 'accent'>; size?: number }) {

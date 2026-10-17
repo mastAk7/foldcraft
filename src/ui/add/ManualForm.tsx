@@ -5,7 +5,7 @@ import { STORAGE_LABEL } from '../../domain/storage'
 import type { Category, DateKind, PackShape, ProductRecord, StorageKind } from '../../domain/types'
 import { ProductGlyph } from '../bits'
 
-const SHAPES: PackShape[] = ['bottle', 'jar', 'carton', 'box', 'bag', 'pouch', 'tub', 'loaf']
+const SHAPES: PackShape[] = ['bottle', 'jar', 'carton', 'box', 'bag', 'pouch', 'tub', 'loaf', 'punnet', 'clamshell']
 const STORAGE: StorageKind[] = ['freezer', 'refrigerator', 'pantry', 'room_temperature']
 const DATE_KINDS: DateKind[] = ['use_by', 'best_before', 'expiry']
 

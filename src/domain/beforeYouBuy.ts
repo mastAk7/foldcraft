@@ -7,6 +7,7 @@ import type { Category, ConsumerItem } from './types'
  */
 
 const CATEGORY_WORDS: Record<Category, string[]> = {
+  'Fresh produce': ['strawberries', 'strawberry', 'tomatoes', 'apples', 'apple', 'mango', 'mangoes', 'grapes', 'fruit', 'produce', 'punnet'],
   Frozen: ['frozen', 'peas', 'ice', 'berries', 'freezer', 'chips'],
   'Dairy & alternatives': ['milk', 'yoghurt', 'yogurt', 'cheese', 'butter', 'cream', 'oat', 'soy', 'almond', 'dairy', 'drink'],
   'Grains & pasta': ['rice', 'pasta', 'grain', 'grains', 'noodles', 'quinoa', 'flour', 'oats', 'couscous', 'basmati'],

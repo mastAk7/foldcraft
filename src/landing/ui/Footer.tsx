@@ -1,6 +1,7 @@
 import { ArrowRight } from 'lucide-react'
 import { forwardRef } from 'react'
 import { WORLD_PATH } from '../../router'
+import { ProducerLink } from './ProducerLink'
 import { Wordmark } from './Wordmark'
 
 const STEPS = [
@@ -38,7 +39,8 @@ export const Footer = forwardRef<HTMLElement, { onEnter: (e: React.MouseEvent<HT
           <Wordmark />
           <p className="lp-footer-note">
             A designathon prototype for <em>Rethinking Consumption: Designing for Responsible Choices</em>. World growth is illustrative
-            feedback, not a measured environmental impact. The producer studio is a future addition.
+            feedback, not a measured environmental impact. Producers can design packaging and issue product codes in the{' '}
+            <ProducerLink className="lp-link">Producer Studio</ProducerLink>.
           </p>
           <a href={WORLD_PATH} className="lp-btn lp-btn-primary" onClick={onEnter} onPointerEnter={onPrefetch} onFocus={onPrefetch}>
             Enter your world <ArrowRight size={18} aria-hidden />

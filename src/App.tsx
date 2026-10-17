@@ -1,5 +1,5 @@
 import { AnimatePresence } from 'motion/react'
-import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { vitality } from './domain/progression'
 import { selectItem, useWorld } from './services/store'
 import { About } from './ui/About'
@@ -67,8 +67,24 @@ export default function App() {
   const compact = useCompact()
   const webgl = useMemo(detectWebGL, [])
   const [crashed, setCrashed] = useState(false)
+  // A producer link (/world?scan=<payload>) hands a QR payload to the normal add flow once the world is ready.
+  const [scan, setScan] = useState<string | null>(() => new URLSearchParams(window.location.search).get('scan'))
+  useEffect(() => {
+    if (!scan || !onboarded) return
+    window.history.replaceState(null, '', window.location.pathname)
+    useWorld.getState().openPanel('add')
+  }, [scan, onboarded])
   const showList = listView || !webgl || crashed
   const sideOpen = !!selected || panel === 'coach' || panel === 'buy' || panel === 'activity'
+
+  const scanShown = useRef(false)
+  useEffect(() => {
+    if (panel === 'add' && scan) scanShown.current = true
+    else if (scanShown.current) {
+      scanShown.current = false
+      setScan(null)
+    }
+  }, [panel, scan])
 
   // Sky warms as the world recovers.
   const level = useMemo(() => vitality(events).continuous / 5, [events])
@@ -132,7 +148,7 @@ export default function App() {
         {!selected && panel === 'activity' && <ActivityLog key="activity" />}
       </AnimatePresence>
       <AnimatePresence>
-        {panel === 'add' && <AddProductFlow key="add" />}
+        {panel === 'add' && <AddProductFlow key="add" initialPayload={scan ?? undefined} />}
         {panel === 'qr' && <DemoQrSheet key="qr" />}
         {panel === 'about' && <About key="about" />}
       </AnimatePresence>

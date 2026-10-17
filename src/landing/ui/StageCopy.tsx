@@ -2,6 +2,7 @@ import { ArrowRight, ChevronDown } from 'lucide-react'
 import { forwardRef } from 'react'
 import { ZONE_ORDER, ZONES } from '../../domain/storage'
 import { WORLD_PATH } from '../../router'
+import { ProducerLink } from './ProducerLink'
 import { ZoneIcon } from '../../ui/ZoneIcon'
 import { STAGES, type Stage } from '../content'
 
@@ -114,9 +115,7 @@ function Extra({ stage, cta }: { stage: Stage; cta: CtaProps }) {
           <a href={WORLD_PATH} className="lp-btn lp-btn-primary lp-btn-lg" onClick={cta.onEnter} onPointerEnter={cta.onPrefetch} onFocus={cta.onPrefetch}>
             Enter Your World <ArrowRight size={18} aria-hidden />
           </a>
-          <span className="lp-btn lp-btn-outline" aria-disabled="true" title="The producer studio is a future part of FoldCraft">
-            For producers · Soon
-          </span>
+          <ProducerLink className="lp-btn lp-btn-outline">For producers: Studio</ProducerLink>
           <button type="button" className="lp-link lp-replay" onClick={cta.onReplay}>
             Replay the journey
           </button>

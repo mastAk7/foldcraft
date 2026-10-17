@@ -1,5 +1,6 @@
 import { ArrowRight } from 'lucide-react'
 import { WORLD_PATH } from '../../router'
+import { ProducerLink } from './ProducerLink'
 import { Wordmark } from './Wordmark'
 
 interface Props {
@@ -35,9 +36,7 @@ export function Nav({ onHome, onHowItWorks, onAbout, onEnter, onPrefetch, return
         <button type="button" className="lp-link lp-hide-sm" onClick={onAbout}>
           About
         </button>
-        <span className="lp-link lp-link-soon lp-hide-md" aria-disabled="true" title="The producer studio is a future part of FoldCraft">
-          For producers <span className="lp-soon">Soon</span>
-        </span>
+        <ProducerLink className="lp-link lp-hide-md">For producers</ProducerLink>
         <a href={WORLD_PATH} className="lp-btn lp-btn-primary lp-btn-sm" onClick={onEnter} onPointerEnter={onPrefetch} onFocus={onPrefetch}>
           <span className="lp-nav-cta-text">{returning ? `Continue to ${returning}` : 'Enter your world'}</span>
           <ArrowRight size={16} aria-hidden />

@@ -11,6 +11,7 @@ export const MANUAL_MATERIALS: { id: string; label: string; routes: EndOfLifeRou
 ]
 
 export const CATEGORIES: Category[] = [
+  'Fresh produce',
   'Frozen',
   'Dairy & alternatives',
   'Grains & pasta',
@@ -22,6 +23,7 @@ export const CATEGORIES: Category[] = [
 ]
 
 const CATEGORY_COLOURS: Record<Category, [string, string]> = {
+  'Fresh produce': ['#e0393e', '#d7ece8'],
   Frozen: ['#7fb9e6', '#e9f4fc'],
   'Dairy & alternatives': ['#f2f0ea', '#4f86c6'],
   'Grains & pasta': ['#d8b46a', '#7a3e1d'],

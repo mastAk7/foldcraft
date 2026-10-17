@@ -1,13 +1,13 @@
 import { AlertCircle, ArrowLeft, Camera, FileImage, Keyboard, Loader2, Package, QrCode } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { DATE_KIND_LABEL, formatDate } from '../../domain/dates'
 import { buildQrPayload } from '../../domain/qr'
 import { LOCATION_LABEL, LOCATION_ZONE, STORAGE_LABEL, suggestedLocation, ZONES } from '../../domain/storage'
 import type { ActualLocation, AddMethod, ProductRecord } from '../../domain/types'
 import { productSource } from '../../services/productSource'
 import { decodeQrFromFile } from '../../services/qrDecode'
 import { useWorld } from '../../services/store'
-import { LocationPicker, ProductGlyph, SourceTag } from '../bits'
+import { LocationPicker, ProductGlyph } from '../bits'
+import { RecordReview } from '../RecordReview'
 import { Modal } from '../Sheet'
 import { CameraScanner } from './CameraScanner'
 import { ManualForm } from './ManualForm'
@@ -17,8 +17,8 @@ type Step =
   | { kind: 'source' }
   | { kind: 'resolving' }
   | { kind: 'unresolved'; raw: string; reason: string }
-  | { kind: 'review'; record: ProductRecord; via: AddMethod }
-  | { kind: 'location'; record: ProductRecord; via: AddMethod }
+  | { kind: 'review'; record: ProductRecord; via: AddMethod; note?: string }
+  | { kind: 'location'; record: ProductRecord; via: AddMethod; note?: string }
 
 const TABS: { id: Tab; label: string; Icon: typeof Camera }[] = [
   { id: 'scan', label: 'Scan', Icon: Camera },
@@ -27,7 +27,7 @@ const TABS: { id: Tab; label: string; Icon: typeof Camera }[] = [
   { id: 'manual', label: 'Manual', Icon: Keyboard },
 ]
 
-export function AddProductFlow() {
+export function AddProductFlow({ initialPayload }: { initialPayload?: string } = {}) {
   const { openPanel, addItem, select, setFocusZone, pushToast } = useWorld.getState()
   const [tab, setTab] = useState<Tab>('scan')
   const [step, setStep] = useState<Step>({ kind: 'source' })
@@ -40,20 +40,30 @@ export function AddProductFlow() {
     productSource.list().then(setSamples)
   }, [])
 
+  // Opened from a producer link (/world?scan=…): resolve the code straight away.
+  const started = useRef(false)
+  useEffect(() => {
+    if (!initialPayload || started.current) return
+    started.current = true
+    resolve(initialPayload, 'studio_link')
+  }, [initialPayload])
+
   const close = () => openPanel(null)
 
   const resolve = async (payload: string, via: AddMethod) => {
     setStep({ kind: 'resolving' })
     const r = await productSource.resolveQr(payload)
-    if (r.ok) setStep({ kind: 'review', record: r.record, via })
+    if (r.ok) setStep({ kind: 'review', record: r.record, via, note: r.note ?? (r.origin === 'registry' ? `Published by the producer in FoldCraft Producer Studio (record v${r.recordVersion}).` : undefined) })
     else
       setStep({
         kind: 'unresolved',
         raw: r.raw,
         reason:
           r.reason === 'not_found'
-            ? 'This looks like a Foldcraft code, but its product record isn’t in the catalogue.'
-            : 'This QR code isn’t a Foldcraft product code. Ordinary retail barcodes and website QR codes can’t be resolved automatically yet.',
+            ? 'This looks like a Foldcraft code, but its product record isn’t available on this device and the code carries no readable copy of it.'
+            : r.reason === 'invalid_snapshot'
+              ? `This Foldcraft code carries a product copy that couldn’t be read safely (${r.detail ?? 'invalid data'}). Nothing was imported.`
+              : 'This QR code isn’t a Foldcraft product code. Ordinary retail barcodes and website QR codes can’t be resolved automatically yet.',
       })
   }
 
@@ -96,11 +106,11 @@ export function AddProductFlow() {
         title={step.kind === 'review' ? 'Check the product details' : `Where is the ${record.name} right now?`}
         footer={
           <div className="flex gap-2">
-            <button type="button" className="btn" onClick={step.kind === 'review' ? back : () => setStep({ kind: 'review', record, via })}>
+            <button type="button" className="btn" onClick={step.kind === 'review' ? back : () => setStep({ kind: 'review', record, via, note: step.note })}>
               <ArrowLeft size={16} aria-hidden /> Back
             </button>
             {step.kind === 'review' ? (
-              <button type="button" className="btn btn-primary flex-1" onClick={() => setStep({ kind: 'location', record, via })}>
+              <button type="button" className="btn btn-primary flex-1" onClick={() => setStep({ kind: 'location', record, via, note: step.note })}>
                 Looks right, continue
               </button>
             ) : (
@@ -112,49 +122,7 @@ export function AddProductFlow() {
         }
       >
         {step.kind === 'review' ? (
-          <div>
-            <div className="flex items-start gap-3 rounded-2xl border border-line bg-white p-3">
-              <ProductGlyph record={record} size={52} />
-              <div className="min-w-0">
-                <div className="font-display text-lg leading-tight">{record.name}</div>
-                <div className="text-[13px] text-ink-2">
-                  {[record.brand, record.size, record.category].filter(Boolean).join(' · ')}
-                </div>
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  <SourceTag kind={record.source} />
-                  {record.batch && <span className="chip border-line bg-white text-ink-2">Batch {record.batch}</span>}
-                </div>
-              </div>
-            </div>
-            <dl className="mt-3 divide-y divide-line rounded-2xl border border-line bg-white px-3 text-sm">
-              <div className="py-2.5">
-                <dt className="text-ink-3">Storage instructions</dt>
-                <dd className="mt-0.5 font-medium">
-                  {rec ? (
-                    <>
-                      {STORAGE_LABEL[rec.kind]}: “{rec.text}”
-                      {rec.afterOpening && <div className="mt-0.5 text-[13px] font-normal text-ink-2">After opening: “{rec.afterOpening.text}”</div>}
-                    </>
-                  ) : (
-                    <span className="text-amber">Not provided. Please check the label.</span>
-                  )}
-                </dd>
-              </div>
-              <div className="py-2.5">
-                <dt className="text-ink-3">Dates</dt>
-                <dd className="mt-0.5 font-medium">
-                  {record.dates.length ? record.dates.map((d) => `${DATE_KIND_LABEL[d.kind]} ${formatDate(d.date)}`).join(' · ') : <span className="text-ink-2">None on record</span>}
-                </dd>
-              </div>
-              <div className="py-2.5">
-                <dt className="text-ink-3">Packaging</dt>
-                <dd className="mt-0.5 font-medium">
-                  {record.packaging?.length ? record.packaging.map((p) => `${p.name} (${p.material})`).join(', ') : <span className="text-amber">Not described</span>}
-                </dd>
-              </div>
-            </dl>
-            {record.sampleNote && <p className="mt-2 text-[12px] text-ink-3">{record.sampleNote}</p>}
-          </div>
+          <RecordReview record={record} note={step.note} />
         ) : (
           <div>
             <p className="mb-3 text-[13.5px] text-ink-2">

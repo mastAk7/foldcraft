@@ -21,7 +21,7 @@ export interface PersistedWorld {
 
 const ACTUALS: ActualLocation[] = ['freezer', 'refrigerator', 'pantry', 'counter', 'unconfirmed']
 const STATUSES: ItemStatus[] = ['unopened', 'opened', 'finished', 'discarded', 'closed']
-const SHAPES: PackShape[] = ['bottle', 'jar', 'carton', 'box', 'bag', 'pouch', 'tub', 'loaf']
+const SHAPES: PackShape[] = ['bottle', 'jar', 'carton', 'box', 'bag', 'pouch', 'tub', 'loaf', 'punnet', 'clamshell']
 const EVENT_TYPES: EventType[] = [
   'added',
   'location_confirmed',
@@ -42,7 +42,7 @@ const EVENT_TYPES: EventType[] = [
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isStr = (v: unknown): v is string => typeof v === 'string'
 
-function sanitizeRecord(r: unknown): ProductRecord | null {
+export function sanitizeRecord(r: unknown): ProductRecord | null {
   if (!isObj(r) || !isStr(r.id) || !isStr(r.name) || !r.name.trim()) return null
   const rec = r as unknown as ProductRecord
   return {

@@ -3,12 +3,25 @@ import { useState } from 'react'
 import { currentRecommendation, LOCATION_LABEL, LOCATION_ZONE, LOCATIONS, STORAGE_LABEL, suggestedLocation, ZONES } from '../domain/storage'
 import { taskActions, taskStateKey, type TaskActionId } from '../domain/tasks'
 import type { ConsumerItem, Task } from '../domain/types'
-import { useWorld } from '../services/store'
+import { useWorld, type PanelId } from '../services/store'
 import { CircularityActions } from './CircularityActions'
 import { ProductGlyph } from './bits'
 import { ZoneIcon } from './ZoneIcon'
 
-export function TaskCard({ task, item, showItem = true, inlinePackaging = true }: { task: Task; item: ConsumerItem; showItem?: boolean; inlinePackaging?: boolean }) {
+export function TaskCard({
+  task,
+  item,
+  showItem = true,
+  inlinePackaging = true,
+  from = null,
+}: {
+  task: Task
+  item: ConsumerItem
+  showItem?: boolean
+  inlinePackaging?: boolean
+  /** Where the card is shown, so "View item" can come back here. */
+  from?: PanelId
+}) {
   const { moveItem, markFinished, snoozeTask, dismissTask, select } = useWorld.getState()
   const [confirming, setConfirming] = useState(false)
   const key = taskStateKey(task)
@@ -43,7 +56,7 @@ export function TaskCard({ task, item, showItem = true, inlinePackaging = true }
         )
       case 'view':
         return (
-          <button key={a} type="button" className={cls(a)} onClick={() => select(item.id)}>
+          <button key={a} type="button" className={cls(a)} onClick={() => select(item.id, from)}>
             <Eye size={14} aria-hidden /> {task.type === 'date_check' || task.type === 'opened_window' ? 'Check item & label' : 'View item'}
           </button>
         )
@@ -115,7 +128,7 @@ export function TaskCard({ task, item, showItem = true, inlinePackaging = true }
           {inlinePackaging ? (
             <CircularityActions item={item} />
           ) : (
-            <button type="button" className="btn btn-sm btn-clay" onClick={() => select(item.id)}>
+            <button type="button" className="btn btn-sm btn-clay" onClick={() => select(item.id, from)}>
               Record packaging <ArrowRight size={14} aria-hidden />
             </button>
           )}

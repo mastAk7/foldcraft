@@ -33,6 +33,7 @@ Other commands:
 
 ```bash
 npm test             # unit tests for the domain rules (Vitest)
+npm run e2e          # build, then first-time-user scenarios in real Chrome (playwright-core; set CHROME if not installed in the usual place)
 npm run typecheck    # TypeScript only
 npm run lint         # ESLint
 npm run dev:host     # dev server reachable from other devices on your network
@@ -43,23 +44,26 @@ npm run dev:host     # dev server reachable from other devices on your network
 0. **Landing (`/`):** scroll to descend: through the cloud sea, over the mountain pass and plains, past the cliff edge into
    the cut-away strata, a cave where the FoldCraft parcel unfolds into a planter, the lava gallery, and down the waterfall
    to the island, which blooms as you arrive. **Enter Your World** opens `/world`. Scroll back up to reverse the journey.
-1. **Onboarding:** three short cards, then **Enter demo world** (seeds 9 sample products).
-2. **Explore:** drag to orbit, scroll or pinch to zoom, and use the zone dock (Frostlands = Freezer, Cold Grove = Refrigerator,
-   Sunlit Plains = Pantry, Homestead = Counter & arrivals, Circularity Workshop = Reuse & sort). The **grid icon** toggles an
-   accessible list view.
+1. **Onboarding:** one welcome card, then **Start with sample products** (seeds 9 sample products, each marked “Sample”).
+   A small **Getting started** card ticks off three steps as you do them (open a product, do its next step, return to
+   the world). **Help** brings it back.
+2. **Explore:** the bottom bar has the three main actions: **My items** (search and filter everything you've recorded),
+   **Add product** and **Before you buy**. In the world, drag to orbit, scroll or pinch to zoom, and use the zone chips
+   (Freezer = Frostlands, Refrigerator = Cold Grove, Pantry = Sunlit Plains, Counter & arrivals = Homestead, Reuse & sort =
+   Circularity Workshop). **Menu → List only** hides the 3D world.
 3. **Mismatch:** the Whole Milk is recorded on the *counter*, but its label says *refrigerate*. It carries an amber badge, and a dashed
-   golden arc leads to a ghost in the Cold Grove. The Storage Coach (top left) explains why. Press **Moved it to
+   golden arc leads to a ghost in the Cold Grove. Open it from **My items** (or tap it): the panel's **Next step** explains why. Press **I’ve moved it to the
    refrigerator**: the item glides across the island and the world grows (Dormant → Stirring).
 4. **Opened changes the rule:** the Tomato Ketchup is fine in the pantry unopened, but it has been opened, so its after-opening
    instruction (“refrigerate”) now applies.
-5. **Circularity:** the Tomato Passata is used up and waits in the Workshop. Open the Circularity Coach and record
-   **Reuse** (glass bottle) and **Recycle** (steel lid). The lifecycle is complete, and the meadow greens and flowers appear.
-6. **Add a product:** **Add product** has four routes: *Scan* (real camera), *QR image* (decode a screenshot), *Samples* or *Manual*.
-   Open **⋯ → Demo QR codes** for scannable codes, including one deliberately unsupported code. Review the details, then
+5. **Circularity:** the Tomato Passata is used up and waits in the Workshop. Open **To do** (Packaging group) and record
+   **Reuse** (glass bottle) and **Recycle** (steel lid). Every action shows a confirmation with **Undo**. The lifecycle is complete, and the meadow greens and flowers appear.
+6. **Add a product:** **Add product** has four routes: *Scan* (real camera), *QR image* (decode a screenshot), *Sample products* or *Type it in*.
+   Open **Menu → Demo QR codes** for scannable codes, including one deliberately unsupported code. Review the details, then
    choose where the item really is. The label's suggestion is shown but never pre-selected.
 7. **Before you buy:** type “milk”. Foldcraft lists similar *recorded* items and asks, neutrally, whether you'll use what you
    have. Choosing to use what you have counts as a responsible action. “I still need it” is respected without judgement.
-8. **Reload:** everything persists. Use **⋯ → Reset demo world** to repeat the demo.
+8. **Reload:** everything persists. Use **Menu → Reset demo world** to repeat the demo.
 
 ## What is real vs. demonstration
 
@@ -109,6 +113,8 @@ src/
     CameraRig.tsx      orbit controls + zone/item fly-to
   ui/                Interface (panels, coaches, add flow, onboarding, list view…)
 ```
+
+Consumer capabilities, journeys and their step counts: [`docs/consumer-journeys.md`](docs/consumer-journeys.md).
 
 Simulation Lab models, equations, units and the map from every displayed result to its calculation: [`docs/simulation-models.md`](docs/simulation-models.md).
 

@@ -40,7 +40,7 @@ export function navigate(path: string) {
  */
 export function forwardProductLink() {
   if (!/^\/p\/[^/]+\/?$/.test(window.location.pathname)) return
-  window.history.replaceState(null, '', `${WORLD_PATH}?scan=${encodeURIComponent(window.location.href)}`)
+  window.history.replaceState(null, '', `${WORLD_PATH}?scan=${encodeURIComponent(window.location.href)}&via=qr_link`)
 }
 
 export const isWorldPath =(path: string) => path === WORLD_PATH || path.startsWith(`${WORLD_PATH}/`)

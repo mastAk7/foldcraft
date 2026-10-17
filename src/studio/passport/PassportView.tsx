@@ -364,7 +364,7 @@ function QrPanel({ project, latestVersion, withSnapshot, setWithSnapshot }: { pr
         >
           <Copy size={14} aria-hidden /> {copied ? 'Copied' : 'Copy link'}
         </button>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate(`${WORLD_PATH}?scan=${encodeURIComponent(built.payload)}`)}>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate(`${WORLD_PATH}?scan=${encodeURIComponent(built.payload)}&via=studio_link`)}>
           <ExternalLink size={14} aria-hidden /> Open in consumer world
         </button>
       </div>

@@ -4,7 +4,7 @@ import { AlertTriangle, Clock, HelpCircle, Recycle } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { needsPackagingAction } from '../domain/circularity'
-import { storageStatus } from '../domain/storage'
+import { storageStatus, zoneForItem } from '../domain/storage'
 import { visibleTasks } from '../domain/tasks'
 import type { ConsumerItem, PackShape } from '../domain/types'
 import { useWorld } from '../services/store'
@@ -73,7 +73,7 @@ const BADGE_META: Record<Exclude<Badge, null>, { Icon: typeof Clock; cls: string
   packaging: { Icon: Recycle, cls: 'badge-green', label: 'Packaging next step' },
 }
 
-function ProductObject({ item, pos, badge, dim }: { item: ConsumerItem; pos: Vec3; badge: Badge; dim: boolean }) {
+function ProductObject({ item, pos, badge, dim, named }: { item: ConsumerItem; pos: Vec3; badge: Badge; dim: boolean; named: boolean }) {
   const group = useRef<THREE.Group>(null)
   const ring = useRef<THREE.Mesh>(null)
   const [hover, setHover] = useState(false)
@@ -144,7 +144,8 @@ function ProductObject({ item, pos, badge, dim }: { item: ConsumerItem; pos: Vec
                 <meta.Icon size={12} strokeWidth={2.6} />
               </span>
             )}
-            {(hover || selected) && <span className="world-tag-name">{item.record.name}</span>}
+            {/* Names show on hover, on selection, and for every item in the zone you're looking at (touch has no hover). */}
+            {(hover || selected || named) && <span className="world-tag-name">{item.record.name}</span>}
           </div>
         </Html>
       </group>
@@ -197,6 +198,7 @@ function Ghost({ item, from, to }: { item: ConsumerItem; from: Vec3; to: Vec3 })
 export function Products({ layout }: { layout: Layout }) {
   const items = useWorld((s) => s.items)
   const selectedId = useWorld((s) => s.selectedId)
+  const focusZone = useWorld((s) => s.focusZone)
   const dateItems = useMemo(
     () => new Set(visibleTasks(items).filter((t) => t.type === 'date_check' || t.type === 'opened_window').map((t) => t.itemId)),
     [items],
@@ -213,6 +215,7 @@ export function Products({ layout }: { layout: Layout }) {
             pos={p.pos}
             badge={badgeFor(item, dateItems.has(item.id))}
             dim={item.status === 'finished' || item.status === 'discarded'}
+            named={!!focusZone && zoneForItem(item) === focusZone}
           />
         )
       })}

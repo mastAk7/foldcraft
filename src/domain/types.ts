@@ -91,7 +91,15 @@ export interface ProductRecord {
 
 export type ItemStatus = 'unopened' | 'opened' | 'finished' | 'discarded' | 'closed'
 
-export type AddMethod = 'qr_camera' | 'qr_image' | 'sample' | 'manual' | 'demo_seed' | 'studio_link'
+/**
+ * How an item entered the world. `qr_camera`/`qr_image` are scans inside Foldcraft; `qr_link` is a
+ * product QR opened by the phone's own camera app (it lands on /p/<id>); `studio_link` is the Producer
+ * Studio's "Open in consumer world" button.
+ */
+export type AddMethod = 'qr_camera' | 'qr_image' | 'qr_link' | 'sample' | 'manual' | 'demo_seed' | 'studio_link'
+
+/** Where a resolved record came from: the producer registry, the snapshot inside the QR, or the sample catalogue. */
+export type RecordOrigin = 'registry' | 'snapshot' | 'catalogue'
 
 export type ComponentOutcome = 'reused' | 'recycled' | 'composted' | 'returned' | 'disposed'
 
@@ -106,6 +114,9 @@ export interface ConsumerItem {
   record: ProductRecord
   addedAt: string
   addedVia: AddMethod
+  /** Producer record version the item was added from, when the code or registry names one. */
+  recordVersion?: number
+  origin?: RecordOrigin
   actual: ActualLocation
   status: ItemStatus
   openedAt?: string

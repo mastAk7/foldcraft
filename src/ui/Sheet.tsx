@@ -1,7 +1,31 @@
-import { X } from 'lucide-react'
+import { ArrowLeft, X } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { useCompact } from './useCompact'
+
+/**
+ * Focus the panel heading when it opens, and give focus back to whatever opened it when it closes,
+ * unless focus has already moved on (for example into the next panel).
+ */
+const openers = new WeakMap<Element, HTMLElement | null>()
+
+function useReturnFocus(ref: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    // Opened from inside another panel (e.g. a row in My items)? That panel is about to close, so
+    // inherit what opened it: closing the product then returns focus to the "My items" button.
+    const active = document.activeElement as HTMLElement | null
+    const parent = active?.closest('[role="dialog"]')
+    const opener = parent && openers.has(parent) ? openers.get(parent)! : active
+    ref.current?.focus({ preventScroll: true })
+    const panel = ref.current?.closest('[role="dialog"]')
+    if (panel) openers.set(panel, opener)
+    return () => {
+      const active = document.activeElement
+      const lost = !active || active === document.body || (panel?.contains(active) ?? false)
+      if (lost && opener?.isConnected && opener !== document.body) opener.focus({ preventScroll: true })
+    }
+  }, [ref])
+}
 
 interface SheetProps {
   title: ReactNode
@@ -13,22 +37,24 @@ interface SheetProps {
   /** Accent colour for the header strip. */
   accent?: string
   wide?: boolean
+  /** A "Back to …" link above the title, for panels opened from another panel. */
+  back?: { label: string; onClick: () => void }
 }
 
 /** Side panel on desktop, bottom sheet on mobile. Non-modal so the world stays explorable. */
-export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent = '#2f6b4f', wide }: SheetProps) {
+export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent = '#2f6b4f', wide, back }: SheetProps) {
   const compact = useCompact()
   const id = useId()
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    ref.current?.focus({ preventScroll: true })
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+  useReturnFocus(ref)
 
   const motionProps = compact
     ? { initial: { y: '100%' }, animate: { y: 0 }, exit: { y: '100%' } }
@@ -48,6 +74,11 @@ export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent 
       style={{ borderTop: `4px solid ${accent}` }}
     >
       {compact && <div className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-black/15" aria-hidden />}
+      {back && (
+        <button type="button" className="btn btn-ghost btn-sm mx-2 mt-2 self-start" onClick={back.onClick}>
+          <ArrowLeft size={14} aria-hidden /> {back.label}
+        </button>
+      )}
       <header className="flex shrink-0 items-start gap-3 px-4 pb-3 pt-3">
         {icon && <div className="mt-0.5 shrink-0">{icon}</div>}
         <div className="min-w-0 flex-1 outline-none" ref={ref} tabIndex={-1}>
@@ -56,7 +87,7 @@ export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent 
             {title}
           </h2>
         </div>
-        <button type="button" className="btn btn-ghost btn-icon -mr-1 -mt-1 shrink-0" onClick={onClose} aria-label="Close panel">
+        <button type="button" className="btn btn-ghost btn-icon -mr-1 -mt-1 shrink-0" onClick={onClose} aria-label="Close panel and return to the world" title="Close (Esc)">
           <X size={18} />
         </button>
       </header>
@@ -87,13 +118,13 @@ export function Modal({
   const id = labelledBy ?? autoId
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    ref.current?.focus({ preventScroll: true })
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+  useReturnFocus(ref)
 
   return (
     <motion.div

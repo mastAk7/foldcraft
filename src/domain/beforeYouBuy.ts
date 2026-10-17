@@ -1,3 +1,4 @@
+import { plainBrand, sameWord, sharesWord, words } from './search'
 import { isActive } from './storage'
 import type { Category, ConsumerItem } from './types'
 
@@ -18,19 +19,13 @@ const CATEGORY_WORDS: Record<Category, string[]> = {
   Other: [],
 }
 
-function tokens(s: string): string[] {
-  return s
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length >= 3)
-}
-
 export function guessCategory(query: string): Category | null {
-  const q = tokens(query)
+  const q = words(query)
   let best: Category | null = null
   let bestScore = 0
-  for (const [cat, words] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
-    const score = q.filter((t) => words.includes(t)).length
+  for (const [cat, list] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
+    // An exact word outweighs a plural variant ("oats" is grains, "oat" is the drink).
+    const score = q.reduce((n, t) => n + (list.includes(t) ? 2 : list.some((w) => sameWord(t, w)) ? 1 : 0), 0)
     if (score > bestScore) {
       best = cat
       bestScore = score
@@ -45,15 +40,13 @@ export interface BuyMatch {
 }
 
 export function findSimilar(query: string, items: ConsumerItem[]): BuyMatch[] {
-  const q = tokens(query)
-  if (q.length === 0) return []
+  if (words(query).length === 0) return []
   const cat = guessCategory(query)
   const out: BuyMatch[] = []
   for (const item of items) {
     if (!isActive(item)) continue
-    const nameTokens = tokens(item.record.name)
-    const nameHits = q.filter((t) => nameTokens.some((n) => n === t || n.startsWith(t) || t.startsWith(n))).length
-    if (nameHits > 0) out.push({ item, strength: 'same' })
+    // Whole words only: a shared pack size or a word that merely starts the same way is not a match.
+    if (sharesWord(query, `${item.record.name} ${plainBrand(item.record.brand) ?? ''}`)) out.push({ item, strength: 'same' })
     else if (cat && item.record.category === cat) out.push({ item, strength: 'similar' })
   }
   return out.sort((a, b) => (a.strength === b.strength ? 0 : a.strength === 'same' ? -1 : 1))

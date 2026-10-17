@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { LOCATION_LABEL, LOCATION_ZONE, LOCATIONS, ZONES } from '../domain/storage'
-import type { ActualLocation, Location, PackShape, ProductRecord } from '../domain/types'
+import type { ActualLocation, AddMethod, Location, PackShape, ProductRecord } from '../domain/types'
 import { ZoneIcon } from './ZoneIcon'
 
 const SHAPE_ICON: Record<PackShape, LucideIcon> = {
@@ -48,6 +48,17 @@ function contrastOn(hex: string) {
   const g = (n >> 8) & 255
   const b = n & 255
   return r * 0.299 + g * 0.587 + b * 0.114 > 160 ? '#2a2f3a' : '#ffffff'
+}
+
+/** How an item was added, in plain words. */
+export const ADD_METHOD_LABEL: Record<AddMethod, string> = {
+  qr_camera: 'Scanned with the camera in Foldcraft',
+  qr_image: 'From a photo of its QR code',
+  qr_link: 'Opened from its QR code (phone camera)',
+  sample: 'Sample shortcut',
+  manual: 'Entered by you',
+  demo_seed: 'Part of the sample world',
+  studio_link: 'Opened from Producer Studio',
 }
 
 export type SourceKind = 'producer' | 'sample' | 'user' | 'derived' | 'unknown'

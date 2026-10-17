@@ -2,7 +2,7 @@ import { AlertCircle, ArrowLeft, Camera, FileImage, Keyboard, Loader2, Package, 
 import { useEffect, useRef, useState } from 'react'
 import { buildQrPayload } from '../../domain/qr'
 import { LOCATION_LABEL, LOCATION_ZONE, STORAGE_LABEL, suggestedLocation, ZONES } from '../../domain/storage'
-import type { ActualLocation, AddMethod, ProductRecord } from '../../domain/types'
+import type { ActualLocation, AddMethod, ProductRecord, RecordOrigin } from '../../domain/types'
 import { productSource } from '../../services/productSource'
 import { decodeQrFromFile } from '../../services/qrDecode'
 import { useWorld } from '../../services/store'
@@ -17,17 +17,19 @@ type Step =
   | { kind: 'source' }
   | { kind: 'resolving' }
   | { kind: 'unresolved'; raw: string; reason: string }
-  | { kind: 'review'; record: ProductRecord; via: AddMethod; note?: string }
-  | { kind: 'location'; record: ProductRecord; via: AddMethod; note?: string }
+  | { kind: 'review'; record: ProductRecord; via: AddMethod; note?: string; meta?: RecordMeta }
+  | { kind: 'location'; record: ProductRecord; via: AddMethod; note?: string; meta?: RecordMeta }
+
+type RecordMeta = { recordVersion?: number; origin?: RecordOrigin }
 
 const TABS: { id: Tab; label: string; Icon: typeof Camera }[] = [
   { id: 'scan', label: 'Scan', Icon: Camera },
   { id: 'upload', label: 'QR image', Icon: FileImage },
-  { id: 'sample', label: 'Samples', Icon: Package },
-  { id: 'manual', label: 'Manual', Icon: Keyboard },
+  { id: 'sample', label: 'Sample products', Icon: Package },
+  { id: 'manual', label: 'Type it in', Icon: Keyboard },
 ]
 
-export function AddProductFlow({ initialPayload }: { initialPayload?: string } = {}) {
+export function AddProductFlow({ initialPayload, initialVia = 'studio_link' }: { initialPayload?: string; initialVia?: AddMethod } = {}) {
   const { openPanel, addItem, select, setFocusZone, pushToast } = useWorld.getState()
   const [tab, setTab] = useState<Tab>('scan')
   const [step, setStep] = useState<Step>({ kind: 'source' })
@@ -45,15 +47,22 @@ export function AddProductFlow({ initialPayload }: { initialPayload?: string } =
   useEffect(() => {
     if (!initialPayload || started.current) return
     started.current = true
-    resolve(initialPayload, 'studio_link')
-  }, [initialPayload])
+    resolve(initialPayload, initialVia)
+  }, [initialPayload, initialVia])
 
   const close = () => openPanel(null)
 
   const resolve = async (payload: string, via: AddMethod) => {
     setStep({ kind: 'resolving' })
     const r = await productSource.resolveQr(payload)
-    if (r.ok) setStep({ kind: 'review', record: r.record, via, note: r.note ?? (r.origin === 'registry' ? `Published by the producer in FoldCraft Producer Studio (record v${r.recordVersion}).` : undefined) })
+    if (r.ok)
+      setStep({
+        kind: 'review',
+        record: r.record,
+        via,
+        note: r.note ?? (r.origin === 'registry' ? `Published by the producer in FoldCraft Producer Studio (record v${r.recordVersion}).` : undefined),
+        meta: { recordVersion: r.recordVersion, origin: r.origin },
+      })
     else
       setStep({
         kind: 'unresolved',
@@ -79,14 +88,20 @@ export function AddProductFlow({ initialPayload }: { initialPayload?: string } =
     }
   }
 
-  const confirm = (record: ProductRecord, via: AddMethod) => {
+  const confirm = (record: ProductRecord, via: AddMethod, meta?: RecordMeta) => {
     if (!loc) return
-    const id = addItem(record, loc, via)
+    const id = addItem(record, loc, via, meta)
     const zone = loc === 'unconfirmed' ? ZONES.homestead : ZONES[LOCATION_ZONE[loc]]
     close()
     setFocusZone(null)
     select(id)
-    pushToast({ tone: 'info', title: `${record.name} added`, body: loc === 'unconfirmed' ? 'It’s waiting on the arrivals pad until you record where it is.' : `Placed in ${zone.name} (${zone.plain}).` })
+    const undo = useWorld.getState().undo
+    pushToast({
+      tone: 'success',
+      title: `${record.name} added`,
+      body: loc === 'unconfirmed' ? 'It’s waiting on the arrivals pad until you record where it is.' : `Placed in ${zone.plain} (${zone.name}).`,
+      action: undo ? { label: 'Undo', run: () => useWorld.getState().undoLast(undo.id) } : undefined,
+    })
   }
 
   const back = () => {
@@ -96,7 +111,7 @@ export function AddProductFlow({ initialPayload }: { initialPayload?: string } =
 
   /* ---------- steps ---------- */
   if (step.kind === 'review' || step.kind === 'location') {
-    const { record, via } = step
+    const { record, via, meta } = step
     const rec = record.storage
     const recLoc = rec ? suggestedLocation(rec.kind) : null
     return (
@@ -106,15 +121,15 @@ export function AddProductFlow({ initialPayload }: { initialPayload?: string } =
         title={step.kind === 'review' ? 'Check the product details' : `Where is the ${record.name} right now?`}
         footer={
           <div className="flex gap-2">
-            <button type="button" className="btn" onClick={step.kind === 'review' ? back : () => setStep({ kind: 'review', record, via, note: step.note })}>
+            <button type="button" className="btn" onClick={step.kind === 'review' ? back : () => setStep({ kind: 'review', record, via, note: step.note, meta })}>
               <ArrowLeft size={16} aria-hidden /> Back
             </button>
             {step.kind === 'review' ? (
-              <button type="button" className="btn btn-primary flex-1" onClick={() => setStep({ kind: 'location', record, via, note: step.note })}>
+              <button type="button" className="btn btn-primary flex-1" onClick={() => setStep({ kind: 'location', record, via, note: step.note, meta })}>
                 Looks right, continue
               </button>
             ) : (
-              <button type="button" className="btn btn-primary flex-1" disabled={!loc} onClick={() => confirm(record, via)}>
+              <button type="button" className="btn btn-primary flex-1" disabled={!loc} onClick={() => confirm(record, via, meta)}>
                 Add to my world
               </button>
             )}

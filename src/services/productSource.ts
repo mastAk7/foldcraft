@@ -1,10 +1,10 @@
 import { CATALOGUE, type CatalogueEntry } from '../data/catalogue'
 import { addDays, isoDate } from '../domain/dates'
 import { parseQrPayload } from '../domain/qr'
-import type { ProductRecord } from '../domain/types'
+import type { ProductRecord, RecordOrigin } from '../domain/types'
 import { CompositeSource, registry } from './registry'
 
-export type ResolveOrigin = 'registry' | 'snapshot' | 'catalogue'
+export type ResolveOrigin = RecordOrigin
 
 export type ResolveResult =
   | { ok: true; record: ProductRecord; origin?: ResolveOrigin; recordVersion?: number; note?: string }

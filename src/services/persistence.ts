@@ -1,6 +1,7 @@
 import { isValidIsoDate } from '../domain/dates'
 import type {
   ActualLocation,
+  AddMethod,
   ConsumerItem,
   EventType,
   ItemStatus,
@@ -12,12 +13,24 @@ import type {
 export const STORAGE_KEY = 'foldcraft:world'
 export const STORAGE_VERSION = 1
 
+/** First-use guide progress. Shown until finished or dismissed; Help or a demo reset reopens it. */
+export interface GuideState {
+  dismissed: boolean
+  done: string[]
+}
+
+export const NEW_GUIDE: GuideState = { dismissed: false, done: [] }
+
 export interface PersistedWorld {
   onboarded: boolean
   worldName: string
   items: ConsumerItem[]
   events: LifecycleEvent[]
+  guide: GuideState
 }
+
+const ADD_METHODS: AddMethod[] = ['qr_camera', 'qr_image', 'qr_link', 'sample', 'manual', 'demo_seed', 'studio_link']
+const ORIGINS = ['registry', 'snapshot', 'catalogue'] as const
 
 const ACTUALS: ActualLocation[] = ['freezer', 'refrigerator', 'pantry', 'counter', 'unconfirmed']
 const STATUSES: ItemStatus[] = ['unopened', 'opened', 'finished', 'discarded', 'closed']
@@ -69,6 +82,9 @@ export function sanitizeItem(v: unknown): ConsumerItem | null {
     ...item,
     record,
     addedAt: isStr(item.addedAt) ? item.addedAt : new Date().toISOString(),
+    addedVia: ADD_METHODS.includes(item.addedVia) ? item.addedVia : 'manual',
+    recordVersion: Number.isInteger(item.recordVersion) && item.recordVersion! > 0 ? item.recordVersion : undefined,
+    origin: ORIGINS.includes(item.origin as (typeof ORIGINS)[number]) ? item.origin : undefined,
     actual: ACTUALS.includes(item.actual) ? item.actual : 'unconfirmed',
     status: STATUSES.includes(item.status) ? item.status : 'unopened',
     packaging: isObj(item.packaging) ? item.packaging : {},
@@ -92,7 +108,13 @@ export function sanitizeWorld(raw: unknown): PersistedWorld | null {
     events: Array.isArray(raw.events)
       ? raw.events.map(sanitizeEvent).filter((e): e is LifecycleEvent => !!e).slice(-500)
       : [],
+    guide: sanitizeGuide(raw.guide),
   }
+}
+
+function sanitizeGuide(v: unknown): GuideState {
+  if (!isObj(v)) return { ...NEW_GUIDE }
+  return { dismissed: v.dismissed === true, done: Array.isArray(v.done) ? v.done.filter(isStr).slice(0, 20) : [] }
 }
 
 /**
@@ -104,7 +126,27 @@ export function migrateWorld(persisted: unknown, fromVersion: number): Persisted
   return sanitizeWorld(persisted)
 }
 
-/** localStorage wrapper that never throws (private mode, quota, disabled storage). */
+export type SaveProblem = 'quota' | 'unavailable'
+
+type SaveListener = (key: string, problem: SaveProblem | null) => void
+const saveListeners = new Set<SaveListener>()
+
+/** Hear about every write: `null` when it was saved, otherwise why it wasn't. */
+export function onSaveResult(fn: SaveListener): () => void {
+  saveListeners.add(fn)
+  return () => saveListeners.delete(fn)
+}
+
+function classifyStorageError(e: unknown): SaveProblem {
+  const name = (e as { name?: string })?.name ?? ''
+  const code = (e as { code?: number })?.code
+  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014 ? 'quota' : 'unavailable'
+}
+
+/**
+ * localStorage wrapper that never throws (private mode, quota, disabled storage). Failed writes are
+ * not swallowed silently: listeners are told, so the UI can say the change isn't saved.
+ */
 export const safeStorage = {
   getItem(name: string): string | null {
     try {
@@ -114,11 +156,13 @@ export const safeStorage = {
     }
   },
   setItem(name: string, value: string): void {
+    let problem: SaveProblem | null = null
     try {
       window.localStorage.setItem(name, value)
-    } catch {
-      /* ignore */
+    } catch (e) {
+      problem = classifyStorageError(e)
     }
+    saveListeners.forEach((fn) => fn(name, problem))
   },
   removeItem(name: string): void {
     try {

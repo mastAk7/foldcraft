@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import { packagingComponents, ROUTE_INFO } from '../domain/circularity'
 import { addDays, isoDate } from '../domain/dates'
 import { vitality } from '../domain/progression'
-import { LOCATION_LABEL, storageStatus } from '../domain/storage'
+import { isActive, LOCATION_LABEL, storageStatus } from '../domain/storage'
 import type {
   ActualLocation,
   AddMethod,
@@ -14,12 +14,31 @@ import type {
   LifecycleEvent,
   Location,
   ProductRecord,
+  RecordOrigin,
+  TaskState,
   ZoneId,
 } from '../domain/types'
-import { migrateWorld, safeStorage, sanitizeWorld, STORAGE_KEY, STORAGE_VERSION, type PersistedWorld } from './persistence'
+import {
+  migrateWorld,
+  NEW_GUIDE,
+  onSaveResult,
+  safeStorage,
+  sanitizeWorld,
+  STORAGE_KEY,
+  STORAGE_VERSION,
+  type PersistedWorld,
+  type SaveProblem,
+} from './persistence'
 import { catalogueSource } from './productSource'
 
-export type PanelId = 'add' | 'coach' | 'buy' | 'activity' | 'qr' | 'about' | null
+export type PanelId = 'items' | 'add' | 'coach' | 'buy' | 'activity' | 'qr' | 'about' | null
+
+/** Guide steps, in order. Ticked from what the person actually does, never by reading a page. */
+export const GUIDE_STEPS = ['open', 'act', 'back'] as const
+export type GuideStep = (typeof GUIDE_STEPS)[number]
+
+/** Use-by and expiry reminders are label safety information: snooze only, never dismiss, while in use. */
+const UNDISMISSABLE_KEYS = ['date_check:use_by', 'date_check:expiry']
 
 export interface Burst {
   id: string
@@ -33,33 +52,53 @@ export interface Toast {
   tone: 'success' | 'info' | 'growth'
   title: string
   body?: string
+  action?: { label: string; run: () => void }
+}
+
+/** The world just before the most recent change, so that one change can be undone. */
+interface UndoPoint {
+  id: string
+  items: ConsumerItem[]
+  events: LifecycleEvent[]
 }
 
 interface UiState {
   selectedId: string | null
+  /** The panel a product was opened from, so its "Back" returns there. */
+  selectedFrom: PanelId
   focusZone: ZoneId | null
   panel: PanelId
   coachTab: CoachKind
   listView: boolean
   bursts: Burst[]
   toasts: Toast[]
+  undo: UndoPoint | null
+  /** Set while changes can't be written to this device. */
+  saveError: SaveProblem | null
 }
 
 interface Actions {
   completeOnboarding(name: string, withDemo: boolean): void
-  addItem(record: ProductRecord, actual: ActualLocation, via: AddMethod): string
+  addItem(record: ProductRecord, actual: ActualLocation, via: AddMethod, meta?: { recordVersion?: number; origin?: RecordOrigin }): string
   moveItem(id: string, loc: Location): void
   markOpened(id: string): void
   markFinished(id: string): void
   markDiscarded(id: string): void
   recordPackaging(id: string, componentId: string, route: EndOfLifeRoute): void
   reconsiderPurchase(query: string, matchedItemIds: string[]): boolean
-  dismissTask(itemId: string, key: string): void
+  dismissTask(itemId: string, key: string): boolean
   snoozeTask(itemId: string, key: string, days: number): void
+  restoreTasks(itemId: string): void
   removeItem(id: string): void
+  undoLast(id: string): boolean
   resetDemo(): void
+  loadSamples(): void
   clearWorld(): void
-  select(id: string | null): void
+  guideDone(step: GuideStep): void
+  dismissGuide(): void
+  restartGuide(): void
+  retrySave(): void
+  select(id: string | null, from?: PanelId): void
   setFocusZone(z: ZoneId | null): void
   openPanel(p: PanelId, coachTab?: CoachKind): void
   setListView(v: boolean): void
@@ -118,7 +157,7 @@ export function buildDemoWorld(today = isoDate()): Pick<PersistedWorld, 'items' 
   return { items, events }
 }
 
-const defaults: PersistedWorld = { onboarded: false, worldName: 'My World', items: [], events: [] }
+const defaults: PersistedWorld = { onboarded: false, worldName: 'My World', items: [], events: [], guide: NEW_GUIDE }
 
 export const useWorld = create<WorldState>()(
   persist(
@@ -130,7 +169,9 @@ export const useWorld = create<WorldState>()(
           items: itemId && patch ? s.items.map((i) => (i.id === itemId ? { ...i, ...patch } : i)) : s.items,
           events: [...s.events, ...newEvents].slice(-500),
           bursts: burst ? [...s.bursts, { ...burst, id: uid() }] : s.bursts,
+          undo: null,
         }))
+        get().guideDone('act')
         const after = vitality(get().events)
         if (after.stage.level > before) {
           get().pushToast({ tone: 'growth', title: `Your world is ${after.stage.name.toLowerCase()}`, body: after.stage.unlock })
@@ -139,26 +180,43 @@ export const useWorld = create<WorldState>()(
       }
       const find = (id: string) => get().items.find((i) => i.id === id)
 
+      /** Remember the world before a change; after it, `offerUndo` shows a toast that can restore it. */
+      const snapshot = (): UndoPoint => ({ id: uid(), items: get().items, events: get().events })
+      const offerUndo = (point: UndoPoint, toast: Omit<Toast, 'id' | 'action'>) => {
+        set({ undo: point })
+        get().pushToast({ ...toast, action: { label: 'Undo', run: () => get().undoLast(point.id) } })
+      }
+      const setTask = (itemId: string, key: string, state: TaskState) =>
+        set((s) => ({ items: s.items.map((i) => (i.id === itemId ? { ...i, tasks: { ...i.tasks, [key]: state } } : i)) }))
+
       return {
         ...defaults,
         selectedId: null,
+        selectedFrom: null,
         focusZone: null,
         panel: null,
         coachTab: 'storage',
         listView: false,
         bursts: [],
         toasts: [],
+        undo: null,
+        saveError: null,
 
         completeOnboarding(name, withDemo) {
           const seed = withDemo ? buildDemoWorld() : { items: [], events: [] }
-          set({ onboarded: true, worldName: name.trim().slice(0, 40) || 'My World', ...seed, selectedId: null, panel: null })
+          set({ onboarded: true, worldName: name.trim().slice(0, 40) || 'My World', ...seed, guide: { ...NEW_GUIDE }, selectedId: null, panel: null, undo: null })
         },
 
-        addItem(record, actual, via) {
-          const item = newItem(record, actual, via)
+        addItem(record, actual, via, meta = {}) {
+          const point = snapshot()
+          const item: ConsumerItem = {
+            ...newItem(record, actual, via),
+            ...(meta.recordVersion ? { recordVersion: meta.recordVersion } : {}),
+            ...(meta.origin ? { origin: meta.origin } : {}),
+          }
           const events = [ev('added', `Added ${record.name}`, item.id, { via })]
           if (actual !== 'unconfirmed') events.push(ev('location_confirmed', `Recorded ${record.name} in ${LOCATION_LABEL[actual]}`, item.id))
-          set((s) => ({ items: [...s.items, item], events: [...s.events, ...events] }))
+          set((s) => ({ items: [...s.items, item], events: [...s.events, ...events], undo: point }))
           return item.id
         },
 
@@ -170,34 +228,50 @@ export const useWorld = create<WorldState>()(
           const moved = { ...item, actual: loc }
           const nowMatch = storageStatus(moved) === 'match'
           const name = item.record.name
+          const point = snapshot()
           let e: LifecycleEvent
           if (wasMismatch && nowMatch) e = ev('storage_corrected', `Moved ${name} to ${LOCATION_LABEL[loc]}, matching its label`, id)
           else if (wasUnconfirmed) e = ev('location_confirmed', `Recorded ${name} in ${LOCATION_LABEL[loc]}`, id)
           else e = ev('moved', `Moved ${name} to ${LOCATION_LABEL[loc]}`, id)
           commit(id, { actual: loc }, [e], wasMismatch && nowMatch ? { itemId: id, color: '#7fd6ff' } : undefined)
-          if (wasMismatch && nowMatch) get().pushToast({ tone: 'success', title: 'Storage now matches the label', body: `${name} → ${LOCATION_LABEL[loc]}` })
+          offerUndo(
+            point,
+            wasMismatch && nowMatch
+              ? { tone: 'success', title: 'Storage now matches the label', body: `${name} → ${LOCATION_LABEL[loc]}` }
+              : {
+                  tone: 'success',
+                  title: `${name}: recorded in ${LOCATION_LABEL[loc]}`,
+                  body: storageStatus(moved) === 'mismatch' ? 'That differs from the label. Open the item to see why.' : undefined,
+                },
+          )
         },
 
         markOpened(id) {
           const item = find(id)
           if (!item || item.status !== 'unopened') return
+          const point = snapshot()
           commit(id, { status: 'opened', openedAt: now() }, [ev('opened', `Opened ${item.record.name}`, id)])
+          const after = item.record.storage?.afterOpening
+          offerUndo(point, { tone: 'success', title: `${item.record.name} marked opened`, body: after ? `After opening the label says: “${after.text}”` : undefined })
         },
 
         markFinished(id) {
           const item = find(id)
           if (!item || (item.status !== 'unopened' && item.status !== 'opened')) return
+          const point = snapshot()
           commit(id, { status: 'finished', finishedAt: now() }, [ev('finished', `Used up ${item.record.name}`, id)], {
             itemId: id,
             color: '#ffd166',
           })
-          get().pushToast({ tone: 'success', title: `${item.record.name} used up`, body: 'Its packaging is waiting in the Circularity Workshop.' })
+          offerUndo(point, { tone: 'success', title: `${item.record.name} used up`, body: 'Next: record what happens to its packaging.' })
         },
 
         markDiscarded(id) {
           const item = find(id)
           if (!item || (item.status !== 'unopened' && item.status !== 'opened')) return
+          const point = snapshot()
           commit(id, { status: 'discarded', finishedAt: now() }, [ev('discarded_unused', `Discarded ${item.record.name} before use`, id)])
+          offerUndo(point, { tone: 'info', title: `${item.record.name} recorded as discarded`, body: 'Its packaging still gets a next step.' })
         },
 
         recordPackaging(id, componentId, route) {
@@ -208,13 +282,19 @@ export const useWorld = create<WorldState>()(
           if (!comp || item.packaging[componentId]) return
           const packaging = { ...item.packaging, [componentId]: info.outcome }
           const done = packagingComponents(item).every((c) => packaging[c.id])
+          const point = snapshot()
           commit(
             id,
             { packaging, status: done ? 'closed' : item.status },
             [ev(info.event, `${info.verb}: ${item.record.name} ${comp.name.toLowerCase()}`, id, { component: componentId, route })],
             { itemId: id, color: route === 'reuse' || route === 'return' ? '#9be36d' : '#ffd166' },
           )
-          if (done) get().pushToast({ tone: 'success', title: 'Lifecycle complete', body: `${item.record.name}: every packaging part is recorded.` })
+          offerUndo(
+            point,
+            done
+              ? { tone: 'success', title: 'Lifecycle complete', body: `${item.record.name}: every packaging part is recorded.` }
+              : { tone: 'success', title: `${info.verb}: ${comp.name.toLowerCase()}`, body: `${item.record.name}. Record the remaining parts too.` },
+          )
         },
 
         reconsiderPurchase(query, matchedItemIds) {
@@ -238,34 +318,94 @@ export const useWorld = create<WorldState>()(
 
         dismissTask(itemId, key) {
           const item = find(itemId)
-          if (!item) return
-          set((s) => ({
-            items: s.items.map((i) => (i.id === itemId ? { ...i, tasks: { ...i.tasks, [key]: { dismissed: true } } } : i)),
-          }))
+          if (!item) return false
+          if (UNDISMISSABLE_KEYS.includes(key) && isActive(item)) return false
+          const point = snapshot()
+          setTask(itemId, key, { dismissed: true })
+          offerUndo(point, { tone: 'info', title: 'Reminder dismissed', body: `${item.record.name}. Hidden reminders can be restored from the item.` })
+          return true
         },
 
         snoozeTask(itemId, key, days) {
+          const item = find(itemId)
+          if (!item) return
           const until = new Date(Date.now() + days * 86_400_000).toISOString()
-          set((s) => ({
-            items: s.items.map((i) => (i.id === itemId ? { ...i, tasks: { ...i.tasks, [key]: { snoozedUntil: until } } } : i)),
-          }))
+          const point = snapshot()
+          setTask(itemId, key, { snoozedUntil: until })
+          offerUndo(point, { tone: 'info', title: days === 1 ? 'Snoozed until tomorrow' : `Snoozed for ${days} days`, body: item.record.name })
+        },
+
+        restoreTasks(itemId) {
+          const item = find(itemId)
+          if (!item || !Object.keys(item.tasks).length) return
+          const point = snapshot()
+          set((s) => ({ items: s.items.map((i) => (i.id === itemId ? { ...i, tasks: {} } : i)) }))
+          offerUndo(point, { tone: 'info', title: 'Hidden reminders restored', body: item.record.name })
         },
 
         removeItem(id) {
+          const item = find(id)
+          if (!item) return
+          const point = snapshot()
           set((s) => ({ items: s.items.filter((i) => i.id !== id), selectedId: s.selectedId === id ? null : s.selectedId }))
+          offerUndo(point, { tone: 'info', title: `Removed ${item.record.name}`, body: 'The entry is gone from your world.' })
+        },
+
+        undoLast(id) {
+          const u = get().undo
+          // Only the most recent change can be undone, so an old toast can never overwrite newer work.
+          if (!u || u.id !== id) return false
+          set((s) => ({
+            items: u.items,
+            events: u.events,
+            undo: null,
+            selectedId: s.selectedId && u.items.some((i) => i.id === s.selectedId) ? s.selectedId : null,
+            toasts: s.toasts.filter((t) => !t.action),
+          }))
+          get().pushToast({ tone: 'info', title: 'Undone' })
+          return true
         },
 
         resetDemo() {
-          set({ ...buildDemoWorld(), onboarded: true, selectedId: null, panel: null, focusZone: null, bursts: [] })
+          set({ ...buildDemoWorld(), guide: { ...NEW_GUIDE }, onboarded: true, selectedId: null, panel: null, focusZone: null, bursts: [], undo: null })
           get().pushToast({ tone: 'info', title: 'Demo world reset', body: 'Sample products restored. Progress is back to the start.' })
         },
 
-        clearWorld() {
-          set({ items: [], events: [], selectedId: null, panel: null, focusZone: null, bursts: [] })
+        loadSamples() {
+          // Only into an empty world, so sample products are never mixed in with real ones unnoticed.
+          if (get().items.length) return
+          set({ ...buildDemoWorld(), selectedId: null, undo: null })
+          get().pushToast({ tone: 'info', title: 'Sample products added', body: 'Each one is marked “Sample”.' })
         },
 
-        select(id) {
-          set({ selectedId: id, panel: id ? null : get().panel })
+        clearWorld() {
+          set({ items: [], events: [], selectedId: null, panel: null, focusZone: null, bursts: [], undo: null })
+        },
+
+        guideDone(step) {
+          const g = get().guide
+          if (g.dismissed || g.done.includes(step)) return
+          // Steps tick in order, so closing a panel before opening an item doesn't count.
+          const i = GUIDE_STEPS.indexOf(step)
+          if (GUIDE_STEPS.slice(0, i).some((s) => !g.done.includes(s))) return
+          set({ guide: { ...g, done: [...g.done, step] } })
+        },
+        dismissGuide() {
+          set((s) => ({ guide: { ...s.guide, dismissed: true } }))
+        },
+        restartGuide() {
+          set({ guide: { ...NEW_GUIDE }, selectedId: null, panel: null })
+        },
+        retrySave() {
+          // Any state write re-persists the whole world.
+          set((s) => ({ worldName: s.worldName }))
+        },
+
+        select(id, from) {
+          const was = get().selectedId
+          set({ selectedId: id, selectedFrom: id ? (from ?? null) : null, panel: id ? null : get().panel })
+          if (id) get().guideDone('open')
+          else if (was) get().guideDone('back')
         },
         setFocusZone(z) {
           set({ focusZone: z })
@@ -277,9 +417,8 @@ export const useWorld = create<WorldState>()(
           set({ listView: v })
         },
         pushToast(t) {
-          const id = uid()
-          set((s) => ({ toasts: [...s.toasts.slice(-2), { ...t, id }] }))
-          setTimeout(() => get().dismissToast(id), 5200)
+          // Timing lives in <Toasts>, which pauses while the pointer or keyboard focus is on a toast.
+          set((s) => ({ toasts: [...s.toasts.slice(-2), { ...t, id: uid() }] }))
         },
         dismissToast(id) {
           set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
@@ -293,11 +432,23 @@ export const useWorld = create<WorldState>()(
       name: STORAGE_KEY,
       version: STORAGE_VERSION,
       storage: createJSONStorage(() => safeStorage),
-      partialize: (s): PersistedWorld => ({ onboarded: s.onboarded, worldName: s.worldName, items: s.items, events: s.events }),
+      partialize: (s): PersistedWorld => ({ onboarded: s.onboarded, worldName: s.worldName, items: s.items, events: s.events, guide: s.guide }),
       migrate: (persisted, version) => (migrateWorld(persisted, version) ?? defaults) as unknown as WorldState,
       merge: (persisted, current) => ({ ...current, ...(sanitizeWorld(persisted) ?? defaults) }),
     },
   ),
 )
+
+// Say when a change could not be written to this device, and clear it once a later write works.
+// The state only changes when the result changes, so a failing write can't loop.
+onSaveResult((key, problem) => {
+  if (key === STORAGE_KEY && useWorld.getState().saveError !== problem) useWorld.setState({ saveError: problem })
+})
+
+/** Everything Foldcraft keeps for this world, as a copy the person can download. */
+export function exportWorld(): string {
+  const { onboarded, worldName, items, events, guide } = useWorld.getState()
+  return JSON.stringify({ app: 'foldcraft', key: STORAGE_KEY, version: STORAGE_VERSION, exportedAt: now(), world: { onboarded, worldName, items, events, guide } }, null, 2)
+}
 
 export const selectItem = (id: string | null) => (s: WorldState) => (id ? s.items.find((i) => i.id === id) ?? null : null)

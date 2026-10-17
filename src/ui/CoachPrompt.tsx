@@ -13,7 +13,8 @@ export function CoachPrompt({ compact = false }: { compact?: boolean }) {
   const selectedId = useWorld((s) => s.selectedId)
   const { openPanel, moveItem, select } = useWorld.getState()
   const [hidden, setHidden] = useState<Set<string>>(new Set())
-  const tasks = useMemo(() => visibleTasks(items).filter((t) => !hidden.has(t.id)), [items, hidden])
+  const all = useMemo(() => visibleTasks(items), [items])
+  const tasks = useMemo(() => all.filter((t) => !hidden.has(t.id)), [all, hidden])
   const task = tasks[0]
   const item = task ? items.find((i) => i.id === task.itemId) : undefined
   const show = !!task && !!item && !panel && !selectedId
@@ -46,11 +47,12 @@ export function CoachPrompt({ compact = false }: { compact?: boolean }) {
             </div>
             <button
               type="button"
-              className="btn btn-ghost btn-sm -mr-1 -mt-1 w-8 px-0"
-              aria-label="Hide this suggestion for now"
+              className="btn btn-ghost btn-sm -mr-1 -mt-1 px-1.5 text-[12px] text-ink-3"
+              aria-label="Hide this suggestion here. It stays in To do."
+              title="Hide here (it stays in To do)"
               onClick={() => setHidden((h) => new Set(h).add(task.id))}
             >
-              <X size={15} />
+              Hide <X size={14} aria-hidden />
             </button>
           </div>
           <div className={`flex flex-wrap gap-1.5 pl-[42px] ${compact ? 'mt-1.5' : 'mt-2.5'}`}>
@@ -64,7 +66,7 @@ export function CoachPrompt({ compact = false }: { compact?: boolean }) {
               </button>
             )}
             <button type="button" className="btn btn-sm" onClick={() => openPanel('coach', task.coach)}>
-              {compact ? 'All' : 'All suggestions'}{tasks.length > 1 ? ` (${tasks.length})` : ''}
+              {compact ? 'To do' : 'See all in To do'}{all.length > 1 ? ` (${all.length})` : ''}
             </button>
           </div>
         </motion.aside>

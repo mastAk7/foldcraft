@@ -1,8 +1,12 @@
-import { Globe, ScanLine, ShoppingBasket } from 'lucide-react'
+import { Globe, List, ScanLine, ShoppingBasket, X } from 'lucide-react'
 import { ZONE_ORDER, ZONES, zoneForItem } from '../domain/storage'
 import { useWorld } from '../services/store'
 import { ZoneIcon } from './ZoneIcon'
 
+/**
+ * The bottom bar. Three main actions (find an item, add one, check before buying) and, as a
+ * secondary row, zone chips that only move the camera around the 3D world.
+ */
 export function ZoneDock({ showZones }: { showZones: boolean }) {
   const focusZone = useWorld((s) => s.focusZone)
   const items = useWorld((s) => s.items)
@@ -13,36 +17,52 @@ export function ZoneDock({ showZones }: { showZones: boolean }) {
     acc[z] = (acc[z] ?? 0) + 1
     return acc
   }, {})
+  const focused = focusZone ? ZONES[focusZone] : null
+  const n = focusZone ? counts[focusZone] ?? 0 : 0
 
   return (
     <div className="pointer-events-none flex w-full flex-col items-center gap-2">
+      {showZones && focused && (
+        <div className="panel pointer-events-auto flex max-w-full items-center gap-2 px-3 py-2 text-[13px]" role="status">
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-white" style={{ background: focused.color }}>
+            <ZoneIcon zone={focused.id} size={13} />
+          </span>
+          <span className="min-w-0">
+            <strong>{focused.plain}</strong> · {n} item{n === 1 ? '' : 's'}.{' '}
+            <span className="text-ink-2">{n ? 'Tap an item to open it.' : 'Nothing recorded here yet.'}</span>
+          </span>
+          <button type="button" className="btn btn-sm btn-ghost shrink-0" onClick={() => setFocusZone(null)}>
+            <X size={14} aria-hidden /> Whole world
+          </button>
+        </div>
+      )}
       {showZones && (
-        <nav
-          aria-label="World zones"
-          className="panel pointer-events-auto flex max-w-full gap-1 overflow-x-auto p-1.5 [scrollbar-width:none]"
-        >
-          <DockButton active={!focusZone} onClick={() => (select(null), setFocusZone(null))} label="Overview" sub="Whole island">
-            <Globe size={16} aria-hidden />
-          </DockButton>
+        <nav aria-label="Look at a zone in the 3D world" className="pointer-events-auto flex max-w-full gap-1 overflow-x-auto rounded-xl bg-white/85 p-1 shadow-sm backdrop-blur [scrollbar-width:none]">
+          <ZoneChip active={!focusZone} onClick={() => (select(null), setFocusZone(null))} label="Whole world">
+            <Globe size={14} aria-hidden />
+          </ZoneChip>
           {ZONE_ORDER.map((id) => {
             const z = ZONES[id]
             return (
-              <DockButton
+              <ZoneChip
                 key={id}
                 active={focusZone === id}
                 onClick={() => (select(null), setFocusZone(id))}
-                label={z.name}
-                sub={z.plain}
+                label={z.plain}
+                title={`${z.plain} (${z.name}): look at this zone`}
                 color={z.color}
                 count={counts[id]}
               >
-                <ZoneIcon zone={id} size={16} />
-              </DockButton>
+                <ZoneIcon zone={id} size={14} />
+              </ZoneChip>
             )
           })}
         </nav>
       )}
-      <div className="pointer-events-auto flex gap-2">
+      <div className="pointer-events-auto flex flex-wrap justify-center gap-2">
+        <button type="button" className="btn panel h-12 !rounded-xl px-4 text-[15px]" onClick={() => openPanel('items')}>
+          <List size={19} aria-hidden /> My items
+        </button>
         <button type="button" className="btn btn-primary h-12 px-5 text-[15px]" onClick={() => openPanel('add')}>
           <ScanLine size={19} aria-hidden /> Add product
         </button>
@@ -54,11 +74,11 @@ export function ZoneDock({ showZones }: { showZones: boolean }) {
   )
 }
 
-function DockButton({
+function ZoneChip({
   active,
   onClick,
   label,
-  sub,
+  title,
   color = '#555c6b',
   count,
   children,
@@ -66,7 +86,7 @@ function DockButton({
   active: boolean
   onClick: () => void
   label: string
-  sub: string
+  title?: string
   color?: string
   count?: number
   children: React.ReactNode
@@ -76,23 +96,16 @@ function DockButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`flex min-h-[44px] shrink-0 items-center gap-2 rounded-xl px-2.5 py-1 text-left transition ${
-        active ? 'bg-white shadow-[0_2px_0_rgba(0,0,0,0.1)]' : 'hover:bg-white/60'
+      title={title}
+      className={`flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12.5px] font-semibold transition ${
+        active ? 'bg-white shadow-[0_2px_0_rgba(0,0,0,0.1)]' : 'text-ink-2 hover:bg-white/70'
       }`}
     >
-      <span
-        className="grid h-7 w-7 place-items-center rounded-lg"
-        style={{ background: active ? color : 'transparent', color: active ? '#fff' : color }}
-      >
+      <span className="grid h-6 w-6 place-items-center rounded-md" style={{ background: active ? color : 'transparent', color: active ? '#fff' : color }}>
         {children}
       </span>
-      <span className="leading-tight">
-        <span className="block text-[13px] font-semibold">
-          {label}
-          {count ? <span className="ml-1 text-ink-3">{count}</span> : null}
-        </span>
-        <span className="block text-[10.5px] text-ink-3">{sub}</span>
-      </span>
+      {label}
+      {count ? <span className="font-normal text-ink-3">{count}</span> : null}
     </button>
   )
 }

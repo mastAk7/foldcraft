@@ -9,15 +9,19 @@ import { Sheet } from './Sheet'
 
 const SUGGESTIONS = ['milk', 'rice', 'ketchup', 'bread', 'dish soap', 'pasta']
 
+/** Kept while the app is open, so "Back to Before you buy" returns to the same check. */
+let lastQuery = ''
+
 export function BeforeYouBuy() {
   const items = useWorld((s) => s.items)
   const { openPanel, reconsiderPurchase, select, pushToast } = useWorld.getState()
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(lastQuery)
   const [decision, setDecision] = useState<null | 'use' | 'buy' | 'dup'>(null)
   const matches = useMemo(() => findSimilar(query, items), [query, items])
   const today = isoDate()
 
   const change = (q: string) => {
+    lastQuery = q
     setQuery(q)
     setDecision(null)
   }
@@ -75,7 +79,7 @@ export function BeforeYouBuy() {
                     <li key={item.id}>
                       <button
                         type="button"
-                        onClick={() => select(item.id)}
+                        onClick={() => select(item.id, 'buy')}
                         className="flex w-full items-center gap-3 rounded-xl border border-line bg-white p-2.5 text-left hover:shadow-md"
                       >
                         <ProductGlyph record={item.record} size={36} />

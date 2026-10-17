@@ -1,4 +1,4 @@
-import { AnimatePresence } from 'motion/react'
+import { AnimatePresence, MotionConfig } from 'motion/react'
 import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { vitality } from './domain/progression'
 import { selectItem, useWorld } from './services/store'
@@ -9,11 +9,14 @@ import { BeforeYouBuy } from './ui/BeforeYouBuy'
 import { CoachPanel } from './ui/CoachPanel'
 import { CoachPrompt } from './ui/CoachPrompt'
 import { DemoQrSheet } from './ui/DemoQrSheet'
+import { GuideCard } from './ui/GuideCard'
+import { ItemsPanel } from './ui/ItemsPanel'
 import { ListView } from './ui/ListView'
 import { Onboarding } from './ui/Onboarding'
 import { ProductPanel } from './ui/ProductPanel'
 import { Toasts } from './ui/Toasts'
 import { TopBar } from './ui/TopBar'
+import type { AddMethod } from './domain/types'
 import { useCompact } from './ui/useCompact'
 import { ZoneDock } from './ui/ZoneDock'
 
@@ -64,18 +67,21 @@ export default function App() {
   const selectedId = useWorld((s) => s.selectedId)
   const selected = useWorld(selectItem(selectedId))
   const events = useWorld((s) => s.events)
+  const guideOpen = useWorld((s) => !s.guide.dismissed)
   const compact = useCompact()
   const webgl = useMemo(detectWebGL, [])
   const [crashed, setCrashed] = useState(false)
-  // A producer link (/world?scan=<payload>) hands a QR payload to the normal add flow once the world is ready.
+  // A product link (/world?scan=<payload>&via=...) hands a QR payload to the normal add flow once the world is ready.
+  // `via` says how it got here: the phone's camera opening a printed code, or the Producer Studio button.
   const [scan, setScan] = useState<string | null>(() => new URLSearchParams(window.location.search).get('scan'))
+  const [scanVia] = useState<AddMethod>(() => (new URLSearchParams(window.location.search).get('via') === 'qr_link' ? 'qr_link' : 'studio_link'))
   useEffect(() => {
     if (!scan || !onboarded) return
     window.history.replaceState(null, '', window.location.pathname)
     useWorld.getState().openPanel('add')
   }, [scan, onboarded])
   const showList = listView || !webgl || crashed
-  const sideOpen = !!selected || panel === 'coach' || panel === 'buy' || panel === 'activity'
+  const sideOpen = !!selected || panel === 'items' || panel === 'coach' || panel === 'buy' || panel === 'activity'
 
   const scanShown = useRef(false)
   useEffect(() => {
@@ -96,6 +102,8 @@ export default function App() {
   }, [level])
 
   return (
+    // Panels, sheets and toasts follow the system "reduce motion" setting, like the 3D world does.
+    <MotionConfig reducedMotion="user">
     <main className="relative h-full w-full select-none overflow-hidden">
       <h1 className="sr-only">Foldcraft: your product world</h1>
       {webgl && !crashed && (
@@ -123,17 +131,26 @@ export default function App() {
       {onboarded && (
         <>
           <TopBar webgl={webgl && !crashed} />
-          {!compact && (
-            <div className="pointer-events-none absolute left-3 top-[84px] z-20">
-              <CoachPrompt />
-            </div>
+          {/* Top left: the first-use guide while it's running, otherwise the single most useful suggestion. */}
+          {guideOpen ? (
+            !(compact && (sideOpen || panel)) && (
+              <div className="pointer-events-none absolute left-3 right-3 top-[84px] z-20 sm:right-auto">
+                <GuideCard />
+              </div>
+            )
+          ) : (
+            !compact && (
+              <div className="pointer-events-none absolute left-3 top-[84px] z-20">
+                <CoachPrompt />
+              </div>
+            )
           )}
           {!(compact && (sideOpen || panel)) && (
             <div
               className="safe-bottom pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-3 transition-[padding]"
               style={{ paddingRight: sideOpen && !compact ? 424 : undefined }}
             >
-              {compact && !showList && <CoachPrompt compact />}
+              {compact && !showList && !guideOpen && <CoachPrompt compact />}
               <ZoneDock showZones={!showList} />
             </div>
           )}
@@ -143,17 +160,19 @@ export default function App() {
 
       <AnimatePresence>
         {selected && <ProductPanel key={`p-${selected.id}`} item={selected} />}
+        {!selected && panel === 'items' && <ItemsPanel key="items" />}
         {!selected && panel === 'coach' && <CoachPanel key="coach" />}
         {!selected && panel === 'buy' && <BeforeYouBuy key="buy" />}
         {!selected && panel === 'activity' && <ActivityLog key="activity" />}
       </AnimatePresence>
       <AnimatePresence>
-        {panel === 'add' && <AddProductFlow key="add" initialPayload={scan ?? undefined} />}
+        {panel === 'add' && <AddProductFlow key="add" initialPayload={scan ?? undefined} initialVia={scanVia} />}
         {panel === 'qr' && <DemoQrSheet key="qr" />}
         {panel === 'about' && <About key="about" />}
       </AnimatePresence>
 
       {!onboarded && <Onboarding />}
     </main>
+    </MotionConfig>
   )
 }

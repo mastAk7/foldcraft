@@ -53,7 +53,7 @@ interface Actions {
   markFinished(id: string): void
   markDiscarded(id: string): void
   recordPackaging(id: string, componentId: string, route: EndOfLifeRoute): void
-  reconsiderPurchase(query: string): boolean
+  reconsiderPurchase(query: string, matchedItemIds: string[]): boolean
   dismissTask(itemId: string, key: string): void
   snoozeTask(itemId: string, key: string, days: number): void
   removeItem(id: string): void
@@ -217,14 +217,19 @@ export const useWorld = create<WorldState>()(
           if (done) get().pushToast({ tone: 'success', title: 'Lifecycle complete', body: `${item.record.name}: every packaging part is recorded.` })
         },
 
-        reconsiderPurchase(query) {
+        reconsiderPurchase(query, matchedItemIds) {
           const key = query.trim().toLowerCase()
+          if (!key || !matchedItemIds.length) return false
+          // One reward per recorded item per (local) day: rephrasing the same purchase earns nothing more.
           const today = isoDate()
           const dup = get().events.some(
-            (e) => e.type === 'purchase_reconsidered' && e.data?.query === key && e.at.slice(0, 10) === today,
+            (e) =>
+              e.type === 'purchase_reconsidered' &&
+              isoDate(new Date(e.at)) === today &&
+              (e.data?.query === key || (e.data?.items ?? '').split(',').some((id) => matchedItemIds.includes(id))),
           )
           if (dup) return false
-          commit(null, null, [ev('purchase_reconsidered', `Used what you have instead of buying “${query.trim()}”`, undefined, { query: key })], {
+          commit(null, null, [ev('purchase_reconsidered', `Used what you have instead of buying “${query.trim()}”`, undefined, { query: key, items: matchedItemIds.join(',') })], {
             zone: 'homestead',
             color: '#9be36d',
           })

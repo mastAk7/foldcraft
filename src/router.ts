@@ -34,7 +34,16 @@ export function navigate(path: string) {
   window.dispatchEvent(new Event(NAV_EVENT))
 }
 
-export const isWorldPath = (path: string) => path === WORLD_PATH || path.startsWith(`${WORLD_PATH}/`)
+/**
+ * A product QR opened by a phone's own camera app lands on `/p/<id>…`. Hand the whole link
+ * (query and `#d=` snapshot included) to the consumer world's add flow. Runs once, before render.
+ */
+export function forwardProductLink() {
+  if (!/^\/p\/[^/]+\/?$/.test(window.location.pathname)) return
+  window.history.replaceState(null, '', `${WORLD_PATH}?scan=${encodeURIComponent(window.location.href)}`)
+}
+
+export const isWorldPath =(path: string) => path === WORLD_PATH || path.startsWith(`${WORLD_PATH}/`)
 export const isStudioPath = (path: string) => path === STUDIO_PATH || path.startsWith(`${STUDIO_PATH}/`)
 
 export type StudioRoute = { view: 'projects' } | { view: 'project'; id: string } | { view: 'report'; id: string }

@@ -8,7 +8,6 @@ import { decodeSnapshot, encodeSnapshot } from '../../domain/qrSnapshot'
 import { STORAGE_LABEL } from '../../domain/storage'
 import type { ProductDate } from '../../domain/types'
 import { navigate, STUDIO_PATH, WORLD_PATH } from '../../router'
-import { isCatalogueId } from '../../services/productSource'
 import { registry } from '../../services/registry'
 import { RecordReview } from '../../ui/RecordReview'
 import { analyse } from '../domain/analysis'
@@ -21,7 +20,7 @@ import { breakMyDesign, LIMITATIONS } from '../domain/sims'
 import type { Project } from '../domain/types'
 import { hasErrors, validateBrief } from '../domain/validation'
 import { goTab } from '../ProjectShell'
-import { useStudio } from '../store'
+import { productIdTaken, useStudio } from '../store'
 import { Callout, download, fmt, GroupTitle, MethodBadge, RiskChip, Toggle } from '../ui'
 
 interface Check {
@@ -49,7 +48,8 @@ export default function PassportView({ project }: { project: Project }) {
   const batch = { lotCode: lot.trim(), packedOn: packedOn || undefined, dates }
   const derived = useMemo(() => deriveRecord(project.brief, target.params, a, batch), [project.brief, target.params, a, lot, packedOn, dates]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const briefIssues = validateBrief(project.brief, { takenIds: isCatalogueId })
+  const projects = useStudio((s) => s.projects)
+  const briefIssues = validateBrief(project.brief, { takenIds: (pid) => productIdTaken(projects, project.id, pid) })
   const checks: Check[] = [
     { ok: !hasErrors(briefIssues), label: 'Brief has no errors', fix: () => goTab('brief') },
     { ok: !!fin, label: fin ? `Design v${fin.n} is marked final` : 'A design version is marked final' },
@@ -347,7 +347,7 @@ function QrPanel({ project, latestVersion, withSnapshot, setWithSnapshot }: { pr
       </div>
       <Toggle checked={withSnapshot} onChange={setWithSnapshot} label="Embed offline copy of the record" hint="Lets a device that can’t reach this browser’s registry import the record. The copy is fixed at this version." />
       {built.snap && !built.snap.ok && <Callout tone="warning">{built.snap.reason}</Callout>}
-      {built.snap?.ok && built.snap.trimmed && <p className="text-[11.5px] text-amber">Long texts were shortened in the embedded copy to keep the code scannable.</p>}
+      {built.snap?.ok && built.snap.trimmed && <p className="text-[11.5px] text-amber">To keep the code scannable, reuse tips or long texts were left out of the embedded copy. This browser’s registry has the full record.</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
         <button type="button" className="btn btn-sm" disabled={!img} onClick={() => img && fetch(img).then((r) => r.blob()).then((b) => download(file, b))}>
           <Download size={14} aria-hidden /> PNG

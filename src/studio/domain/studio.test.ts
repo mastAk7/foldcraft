@@ -5,7 +5,7 @@ import { buildQrPayload, parseQrPayload } from '../../domain/qr'
 import { decodeSnapshot, encodeSnapshot, SNAPSHOT_MAX } from '../../domain/qrSnapshot'
 import { catalogueSource } from '../../services/productSource'
 import { CompositeSource, Registry, type KeyValue } from '../../services/registry'
-import { sanitizeStudio } from '../store'
+import { productIdTaken, sanitizeStudio } from '../store'
 import { analyse, designNotes } from './analysis'
 import { diff, interpret } from './assistant'
 import { compareDesigns } from './compare'
@@ -203,6 +203,14 @@ describe('brief validation and passport', () => {
     expect(validateBrief({ ...brief, metadata: { ...brief.metadata, productId: 'whole-milk-1l' } }, { takenIds: (id) => id === 'whole-milk-1l' }).some((i) => i.field === 'productId')).toBe(true)
   })
 
+  it('product IDs are unique across projects and the sample catalogue', () => {
+    const { projects } = sampleProjects(TODAY)
+    const [a, b] = projects
+    expect(productIdTaken(projects, a.id, a.brief.metadata.productId)).toBe(false)
+    expect(productIdTaken(projects, b.id, a.brief.metadata.productId)).toBe(true)
+    expect(productIdTaken(projects, null, 'whole-milk-1l')).toBe(true)
+  })
+
   it('derives storage from the temperature range', () => {
     expect(derivedStorageKind(brief)).toBe('refrigerator')
     expect(derivedStorageKind({ ...brief, metadata: { ...brief.metadata, tempMinC: 12, tempMaxC: 20 } })).toBe('room_temperature')
@@ -231,7 +239,16 @@ describe('QR snapshot and consumer resolution', () => {
     expect(enc.data.length).toBeLessThanOrEqual(SNAPSHOT_MAX)
     const dec = decodeSnapshot(enc.data)
     expect(dec).toMatchObject({ ok: true, recordVersion: 3 })
-    if (dec.ok) expect(dec.record).toEqual({ ...pp.record, image: undefined, packaging: pp.record.packaging!.map((c) => ({ id: c.id, name: c.name, material: c.material, routes: c.routes, guidance: c.guidance })) })
+    // Full guidance is kept; the reuse tip is the first thing dropped when space runs out.
+    const withoutReuse = structuredClone(pp.record)
+    delete withoutReuse.image
+    for (const c of withoutReuse.packaging!) delete c.reuseIdea
+    if (dec.ok) expect([{ ...pp.record, image: undefined }, withoutReuse]).toContainEqual(dec.record)
+    // When it fits, the reuse tip travels too, so a clean device shows the same circularity guidance.
+    const small = { ...pp.record, handling: undefined, packaging: pp.record.packaging!.map((c) => ({ ...c, guidance: 'Rinse first.' })) }
+    const encSmall = encodeSnapshot(small, 1)
+    const decSmall = encSmall.ok ? decodeSnapshot(encSmall.data) : null
+    expect(decSmall?.ok && decSmall.record.packaging).toEqual(small.packaging)
   })
 
   it('rejects malformed, oversized and unknown-version snapshots', () => {

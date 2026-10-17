@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { safeStorage } from '../services/persistence'
+import { isCatalogueId } from '../services/productSource'
 import { registry, type PublishedPassport } from '../services/registry'
 import { analyse } from './domain/analysis'
 import { validateParams } from './domain/params'
@@ -52,6 +53,22 @@ function touch(p: Project, patch: Partial<Project>): Project {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/**
+ * Product IDs are the registry key, so two projects must never share one: a second project's v1
+ * would replace the first project's v1. Sample catalogue IDs are reserved too.
+ */
+export function productIdTaken(projects: Project[], projectId: string | null, productId: string) {
+  return isCatalogueId(productId) || projects.some((p) => p.id !== projectId && p.brief.metadata.productId === productId)
+}
+
+function uniqueProductId(projects: Project[], base: string) {
+  if (!base || !productIdTaken(projects, null, base)) return base
+  for (let n = 2; ; n++) {
+    const id = `${base.slice(0, 60)}-${n}`
+    if (!productIdTaken(projects, null, id)) return id
+  }
+}
+
 /** Keep only structurally sound projects from storage; a bad save must never break the studio. */
 export function sanitizeStudio(raw: unknown): Persisted {
   if (!isObj(raw)) return { projects: [], drafts: {}, seeded: false }
@@ -87,7 +104,8 @@ export const useStudio = create<StudioState>()(
         storageError: null,
 
         createProject(kind) {
-          const brief = kind ? briefFor(kind) : emptyBrief()
+          const base = kind ? briefFor(kind) : emptyBrief()
+          const brief = { ...base, metadata: { ...base.metadata, productId: uniqueProductId(get().projects, base.metadata.productId) } }
           const p: Project = {
             id: uid(),
             name: brief.identification.name || 'Untitled product',
@@ -182,6 +200,7 @@ export const useStudio = create<StudioState>()(
           if (!p) return { ok: false, reason: 'Project not found.' }
           const fin = [...p.versions].reverse().find((v) => v.final)
           if (!fin) return { ok: false, reason: 'Finalise a design version first.' }
+          if (productIdTaken(get().projects, id, p.brief.metadata.productId)) return { ok: false, reason: 'Another project or sample product already uses this product ID. Change it in the brief first.' }
           const recordVersion = (p.published?.recordVersion ?? 0) + 1
           const batch: Batch = { ...b, id: uid(), designVersionId: fin.id, recordVersion, createdAt: now() }
           const a = analyse(fin.params, p.brief, p.assumptions)

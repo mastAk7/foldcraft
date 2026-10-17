@@ -7,8 +7,13 @@ actually kept (freezer, fridge, pantry, counter). Product-specific guidance then
 as the label says, use it before it's forgotten, give its packaging a next life, and check what you already have before buying
 more. The island visibly recovers as you complete those actions.
 
-This repository holds the **consumer side only**. The producer platform (which would publish product records and QR codes) is
-represented by a local sample catalogue behind a `ProductSource` interface.
+This repository holds all three parts: the scroll-driven landing page (`/`), the consumer world (`/world`) and the **Producer
+Studio** (`/studio`), where a producer writes a brief, iterates a parametric package, runs simplified tests and publishes a product
+record with a QR code. There is no backend: published records live in this browser's storage, and the QR code also carries a
+compact copy of the record so another device can import it. A sample catalogue sits behind the same `ProductSource` interface.
+
+**QR links** point at the origin the app is served from (`<origin>/p/<id>…`). A phone's own camera opens that link, and the app
+forwards it to `/world?scan=…`. Codes printed by earlier builds (`foldcraft.app/p/…`) are still read by the in-app scanner.
 
 ## Quick start
 

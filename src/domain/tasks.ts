@@ -46,7 +46,7 @@ export function deriveItemTasks(item: ConsumerItem, today = isoDate()): Task[] {
   if (status === 'mismatch') {
     const rec = currentRecommendation(item)!
     const target = suggestedLocation(rec.kind)
-    const loc = item.actual === 'unconfirmed' ? 'unknown' : LOCATION_LABEL[item.actual].toLowerCase()
+    const loc = item.actual === 'unconfirmed' ? 'somewhere unconfirmed' : `${item.actual === 'counter' ? 'on' : 'in'} the ${LOCATION_LABEL[item.actual].toLowerCase()}`
     tasks.push({
       id: `storage_mismatch:${item.id}`,
       type: 'storage_mismatch',
@@ -54,7 +54,7 @@ export function deriveItemTasks(item: ConsumerItem, today = isoDate()): Task[] {
       itemId: item.id,
       priority: 100,
       title: `Move the ${name} to ${ZONES[LOCATION_ZONE[target]].name}?`,
-      reason: `You recorded it on the ${loc}. ${
+      reason: `You recorded it ${loc}. ${
         rec.phase === 'after_opening' ? 'Because you’ve opened it, the' : 'The'
       } storage instructions say: “${rec.text}” (${STORAGE_LABEL[rec.kind]}).`,
       source: sourceLabel(item),

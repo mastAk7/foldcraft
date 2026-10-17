@@ -103,7 +103,7 @@ export function BeforeYouBuy() {
                       type="button"
                       className="btn btn-sm btn-primary"
                       onClick={() => {
-                        const counted = reconsiderPurchase(query)
+                        const counted = reconsiderPurchase(query, matches.map((m) => m.item.id))
                         setDecision(counted ? 'use' : 'dup')
                         if (counted) pushToast({ tone: 'success', title: 'Using what you have', body: 'Noted. Your world grows a little.' })
                       }}

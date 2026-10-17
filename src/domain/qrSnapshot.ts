@@ -10,7 +10,8 @@ import type { Category, DateKind, EndOfLifeRoute, PackShape, ProductRecord, Stor
  *
  * Schema v1 (short keys to keep the code scannable):
  *   { v: 1, id, rv, n, b?, c, s, cl: [color, accent], z?, l?, d: [[kind, yyyy-mm-dd]],
- *     st?: { k, t, ak?, at? }, h?, pk: [[id, name, material, routes, guidance]] }
+ *     st?: { k, t, ak?, at? }, h?, pk: [[id, name, material, routes, guidance, reuseIdea?]] }
+ *   (reuseIdea was added later as an optional trailing element; older readers ignore it.)
  */
 
 export const SNAPSHOT_VERSION = 1
@@ -39,7 +40,8 @@ interface SnapshotV1 {
   d: [string, string][]
   st?: { k: string; t: string; ak?: string; at?: string }
   h?: string
-  pk: [string, string, string, string[], string][]
+  /** [id, name, material, routes, guidance, reuseIdea?] */
+  pk: ([string, string, string, string[], string] | [string, string, string, string[], string, string])[]
 }
 
 const cut = (s: string | undefined, max: number) => (s && s.length > max ? `${s.slice(0, max - 1)}…` : s)
@@ -60,9 +62,12 @@ function fromBase64Url(s: string) {
 
 export type EncodeResult = { ok: true; data: string; trimmed: boolean } | { ok: false; reason: string }
 
-/** Encode a record (without its image) into a fragment-safe string, shortening long texts if needed. */
+/**
+ * Encode a record (without its image) into a fragment-safe string. If it is too large, reuse tips are
+ * left out first (full disposal guidance matters more), then long texts are shortened.
+ */
 export function encodeSnapshot(r: ProductRecord, recordVersion: number): EncodeResult {
-  const build = (textMax: number, guidance: boolean): SnapshotV1 => ({
+  const build = (textMax: number, guidance: boolean, reuse: boolean): SnapshotV1 => ({
     v: 1,
     id: r.id,
     rv: recordVersion,
@@ -78,11 +83,14 @@ export function encodeSnapshot(r: ProductRecord, recordVersion: number): EncodeR
       ? { st: { k: r.storage.kind, t: cut(r.storage.text, textMax)!, ...(r.storage.afterOpening ? { ak: r.storage.afterOpening.kind, at: cut(r.storage.afterOpening.text, textMax) } : {}) } }
       : {}),
     ...(r.handling ? { h: cut(r.handling, textMax) } : {}),
-    pk: (r.packaging ?? []).map((p) => [p.id, cut(p.name, 30)!, cut(p.material, 40)!, p.routes, guidance ? cut(p.guidance, textMax)! : '']),
+    pk: (r.packaging ?? []).map((p) => {
+      const base: [string, string, string, string[], string] = [p.id, cut(p.name, 30)!, cut(p.material, 40)!, p.routes, guidance ? cut(p.guidance, textMax)! : '']
+      return reuse && p.reuseIdea ? [...base, cut(p.reuseIdea, textMax)!] : base
+    }),
   })
   let trimmed = false
-  for (const [max, guidance] of [[400, true], [180, true], [100, true], [100, false]] as const) {
-    const data = toBase64Url(JSON.stringify(build(max, guidance)))
+  for (const [max, guidance, reuse] of [[400, true, true], [400, true, false], [180, true, false], [100, true, false], [100, false, false]] as const) {
+    const data = toBase64Url(JSON.stringify(build(max, guidance, reuse)))
     if (data.length <= SNAPSHOT_MAX) return { ok: true, data, trimmed }
     trimmed = true
   }
@@ -118,9 +126,10 @@ export function decodeSnapshot(data: string): DecodeResult {
   const packaging = []
   for (const p of s.pk) {
     if (!Array.isArray(p) || !str(p[0], 40) || !str(p[1], 40) || !str(p[2], 60) || !Array.isArray(p[3]) || !str(p[4], 500)) return { ok: false, reason: 'Snapshot has invalid packaging.' }
+    if (p[5] !== undefined && !str(p[5], 500)) return { ok: false, reason: 'Snapshot has invalid packaging.' }
     const routes = p[3].filter((x): x is EndOfLifeRoute => ROUTES.includes(x as EndOfLifeRoute))
     if (!routes.length || routes.length !== p[3].length) return { ok: false, reason: 'Snapshot has invalid packaging routes.' }
-    packaging.push({ id: p[0], name: p[1], material: p[2], routes, guidance: p[4] || 'See the producer’s label for disposal guidance.' })
+    packaging.push({ id: p[0], name: p[1], material: p[2], routes, guidance: p[4] || 'See the producer’s label for disposal guidance.', ...(p[5] ? { reuseIdea: p[5] } : {}) })
   }
   const record: ProductRecord = {
     id: s.id.toLowerCase(),

@@ -24,6 +24,12 @@ describe('QR payloads', () => {
   it('round-trips the demo URL format', () => {
     expect(parseQrPayload(buildQrPayload('whole-milk-1l', 'B-1'))).toEqual({ ok: true, productId: 'whole-milk-1l', batch: 'B-1' })
   })
+  it('points new codes at the app origin and still reads legacy ones', () => {
+    expect(buildQrPayload('whole-milk-1l', undefined, { origin: 'https://foldcraft-gamma.vercel.app' })).toBe('https://foldcraft-gamma.vercel.app/p/whole-milk-1l')
+    expect(parseQrPayload('https://foldcraft-gamma.vercel.app/p/whole-milk-1l')).toMatchObject({ ok: true, productId: 'whole-milk-1l' })
+    expect(parseQrPayload('https://foldcraft.app/p/whole-milk-1l')).toMatchObject({ ok: true, productId: 'whole-milk-1l' })
+    expect(parseQrPayload('http://localhost:5173/p/whole-milk-1l?batch=B-1')).toMatchObject({ ok: true, batch: 'B-1' })
+  })
   it('accepts the short scheme', () => {
     expect(parseQrPayload('foldcraft:p/basmati-rice-1kg')).toMatchObject({ ok: true, productId: 'basmati-rice-1kg' })
   })

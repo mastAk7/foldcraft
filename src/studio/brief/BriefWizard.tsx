@@ -3,7 +3,6 @@ import { useId, useMemo, type ReactNode } from 'react'
 import { DATE_KIND_LABEL, DATE_KIND_MEANING, formatDate, isoDate } from '../../domain/dates'
 import { STORAGE_LABEL } from '../../domain/storage'
 import type { DateKind, StorageKind } from '../../domain/types'
-import { isCatalogueId } from '../../services/productSource'
 import { MATERIALS, MATERIAL_IDS, TEMPLATE_MATERIALS } from '../domain/materials'
 import { TEMPLATE_IDS, TEMPLATE_INFO } from '../domain/params'
 import { derivedStorageKind, storageRule } from '../domain/passport'
@@ -12,7 +11,7 @@ import { slug } from '../domain/project'
 import type { BriefCategory, BriefStage, ColdChain, Cushioning, Fragility, ProduceKind, ProductBrief, Project, Transport, Ventilation } from '../domain/types'
 import { hasErrors, stageIssues, validateBrief, type BriefIssue } from '../domain/validation'
 import { goTab } from '../ProjectShell'
-import { useStudio } from '../store'
+import { productIdTaken, useStudio } from '../store'
 import { Callout, Field, Segmented, Toggle } from '../ui'
 import { ImageField, Num, Text } from './fields'
 
@@ -37,7 +36,8 @@ export function BriefWizard({ project }: { project: Project }) {
   const { updateBrief, setBriefStage, completeBrief, generateDesign } = useStudio.getState()
   const b = project.brief
   const stage = project.briefStage
-  const issues = useMemo(() => validateBrief(b, { takenIds: isCatalogueId }), [b])
+  const projects = useStudio((s) => s.projects)
+  const issues = useMemo(() => validateBrief(b, { takenIds: (pid) => productIdTaken(projects, project.id, pid) }), [b, projects, project.id])
   const set = (fn: (b: ProductBrief) => ProductBrief) => updateBrief(project.id, fn)
   const idx = STAGES.findIndex((s) => s.id === stage)
   const stageErr = stage !== 'review' && hasErrors(stageIssues(issues, stage))

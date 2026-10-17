@@ -37,7 +37,7 @@ export function validateBrief(b: ProductBrief, opts: { takenIds?: (id: string) =
 
   /* B — metadata */
   if (!ID_RE.test(m.productId)) err('B', 'productId', 'Product ID: lowercase letters, numbers and hyphens, 2–64 characters.')
-  else if (opts.takenIds?.(m.productId)) err('B', 'productId', 'This product ID is already used by a sample catalogue product.')
+  else if (opts.takenIds?.(m.productId)) err('B', 'productId', 'This product ID is already used by a sample catalogue product or another project.')
   if (m.tempMinC !== undefined && m.tempMaxC !== undefined && m.tempMinC > m.tempMaxC) err('B', 'tempMinC', 'Minimum temperature is above the maximum.')
   if (m.humidityMinPct !== undefined && m.humidityMaxPct !== undefined && m.humidityMinPct > m.humidityMaxPct) err('B', 'humidityMinPct', 'Minimum humidity is above the maximum.')
   for (const h of [m.humidityMinPct, m.humidityMaxPct]) if (h !== undefined && (h < 0 || h > 100)) err('B', 'humidityMaxPct', 'Humidity must be 0–100%.')

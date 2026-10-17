@@ -1,6 +1,6 @@
 import { hash2, rng } from './noise'
 import { COUNTER, ARRIVAL } from './layout'
-import { cellAt, heightAt, isFree, PADS, terrain } from './terrainData'
+import { cellAt, heightAt, isFree, LANDMARKS, PADS, RING_RADIUS, terrain, type Region } from './terrainData'
 
 export type V3 = [number, number, number]
 
@@ -17,7 +17,17 @@ export interface Box {
  */
 export type PropGroup = 'base' | 'ice' | 'glass' | 'glow' | 'flowers' | 'grown' | 'dead' | 'lanterns'
 
-export type PropSet = Record<PropGroup, Box[]>
+/** A footprint the walking player can't pass through (axis-aligned, full height). */
+export interface Collider {
+  x0: number
+  x1: number
+  z0: number
+  z1: number
+}
+
+export interface PropSet extends Record<PropGroup, Box[]> {
+  colliders: Collider[]
+}
 
 const b = (p: V3, s: V3, c: string, root?: V3): Box => ({ p, s, c, root })
 
@@ -93,6 +103,79 @@ function deadBush(x: number, z: number): Box[] {
     b([x + 0.18, y + 0.55, z], [0.36, 0.08, 0.08], '#7a6248'),
     b([x - 0.12, y + 0.45, z + 0.1], [0.08, 0.08, 0.3], '#7a6248'),
   ]
+}
+
+function fruitTree(x: number, z: number, seed: number): Box[] {
+  const y = heightAt(x, z)
+  const r: V3 = [x, y, z]
+  const fruit = seed % 3 === 0 ? '#f2c94c' : '#e0533d'
+  const out = [
+    b([x, y + 0.8, z], [0.4, 1.6, 0.4], '#6b4428', r),
+    b([x, y + 2.1, z], [2, 1.2, 2], '#5aa843', r),
+    b([x, y + 2.85, z], [1.3, 0.5, 1.3], '#6bbb52', r),
+  ]
+  for (const [dx, dy, dz] of [
+    [0.8, 1.8, 0.5],
+    [-0.6, 2.3, 0.85],
+    [0.3, 2.5, -0.85],
+    [-0.85, 1.9, -0.3],
+  ])
+    out.push(b([x + dx, y + dy, z + dz], [0.22, 0.22, 0.22], fruit, r))
+  return out
+}
+
+function reeds(x: number, z: number): Box[] {
+  const y = heightAt(x, z)
+  const out: Box[] = []
+  for (let i = 0; i < 4; i++) {
+    const ox = (hash2(x * 4 + i, z, 3) - 0.5) * 0.7
+    const oz = (hash2(x, z * 4 + i, 4) - 0.5) * 0.7
+    const hh = 0.7 + hash2(x + i, z - i, 5) * 0.6
+    const r: V3 = [x + ox, y, z + oz]
+    out.push(b([x + ox, y + hh / 2, z + oz], [0.07, hh, 0.07], '#5f8f45', r))
+    out.push(b([x + ox, y + hh + 0.1, z + oz], [0.12, 0.24, 0.12], '#7a4d2a', r))
+  }
+  return out
+}
+
+/** Stacked-stone cairn and pennant marking the highland lookout. */
+function cairn(x: number, z: number): Box[] {
+  const y = heightAt(x, z)
+  return [
+    b([x, y + 0.35, z], [1.4, 0.7, 1.4], '#9da2a8'),
+    b([x + 0.05, y + 0.95, z - 0.05], [1, 0.5, 1], '#b1b5ba'),
+    b([x - 0.05, y + 1.4, z + 0.05], [0.65, 0.4, 0.65], '#9da2a8'),
+    b([x, y + 2.4, z], [0.1, 2.4, 0.1], '#5b3a25'),
+    b([x + 0.45, y + 3.2, z], [0.8, 0.5, 0.05], '#d9734a'),
+  ]
+}
+
+function signpost(x: number, z: number, facing: number): Box[] {
+  const y = heightAt(x, z)
+  const dx = Math.cos(facing) * 0.35
+  const dz = Math.sin(facing) * 0.35
+  const along = Math.abs(Math.cos(facing)) > Math.abs(Math.sin(facing))
+  return [
+    b([x, y + 0.85, z], [0.14, 1.7, 0.14], '#5b3a25'),
+    b([x + dx, y + 1.45, z + dz], along ? [0.9, 0.34, 0.08] : [0.08, 0.34, 0.9], '#c99a6b'),
+  ]
+}
+
+/** A small rock-and-turf islet floating out past the edge, for a sense of distance. */
+function islet(x: number, y: number, z: number, size: number, seed: number): Box[] {
+  const r = rng(seed)
+  const out: Box[] = []
+  const w = Math.round(size)
+  for (let dx = -w; dx <= w; dx++)
+    for (let dz = -w; dz <= w; dz++) {
+      if (Math.hypot(dx, dz) > size + r() * 0.6) continue
+      const depth = 1 + Math.round((size - Math.hypot(dx, dz)) * 1.2 + r())
+      out.push(b([x + dx, y - depth / 2, z + dz], [1, depth, 1], '#8c8b8f'))
+      out.push(b([x + dx, y + 0.17, z + dz], [1, 0.34, 1], r() < 0.2 ? '#6bbb52' : '#7cc35b'))
+    }
+  out.push(...[0, 1].map((i) => b([x + i * 0.4 - 0.2, y + 1.5, z], [1.4, 1, 1.4], '#4f9d3a')))
+  out.push(b([x - 0.2, y + 0.6, z], [0.35, 1, 0.35], '#6b4428'))
+  return out
 }
 
 function rock(x: number, z: number, c: string): Box[] {
@@ -261,7 +344,7 @@ function clearView(x: number, z: number): boolean {
 }
 
 function scatter(
-  region: string,
+  region: Region,
   count: number,
   seed: number,
   minDist: number,
@@ -282,12 +365,52 @@ function scatter(
   return out
 }
 
+/**
+ * Walking colliders for built things: any box that blocks a standing person (it starts below head
+ * height and rises above the shins) becomes a footprint. Roofs, awnings and floor tiles don't.
+ */
+function collidersFrom(boxes: Box[], out: Collider[]) {
+  for (const bx of boxes) {
+    const ground = heightAt(bx.p[0], bx.p[2])
+    const bottom = bx.p[1] - bx.s[1] / 2 - ground
+    const top = bx.p[1] + bx.s[1] / 2 - ground
+    if (bottom > 1.6 || top < 0.4) continue
+    out.push({ x0: bx.p[0] - bx.s[0] / 2, x1: bx.p[0] + bx.s[0] / 2, z0: bx.p[2] - bx.s[2] / 2, z1: bx.p[2] + bx.s[2] / 2 })
+  }
+}
+
+/** Tree trunks and posts block; canopies overhead don't. */
+function trunk(x: number, z: number, half = 0.3): Collider {
+  return { x0: x - half, x1: x + half, z0: z - half, z1: z + half }
+}
+
+/** The stream cell nearest the spot chosen for the waterwheel. */
+export function waterwheelSpot(): [number, number] {
+  let best: [number, number] = [13, 21]
+  let bd = Infinity
+  for (const c of terrain().cells) {
+    if (c.water !== 'stream') continue
+    const d = Math.hypot(c.x - 13, c.z - 21)
+    if (d < bd) {
+      bd = d
+      best = [c.x, c.z]
+    }
+  }
+  return best
+}
+
+export const WINDMILL: [number, number] = [5, 17]
+
 let cached: PropSet | null = null
 
 export function buildProps(): PropSet {
   if (cached) return cached
-  const set: PropSet = { base: [], ice: [], glass: [], glow: [], flowers: [], grown: [], dead: [], lanterns: [] }
+  const set: PropSet = { base: [], ice: [], glass: [], glow: [], flowers: [], grown: [], dead: [], lanterns: [], colliders: [] }
   const taken: [number, number][] = []
+  const solid = (boxes: Box[]) => {
+    collidersFrom(boxes, set.colliders)
+    return boxes
+  }
 
   // reserve structure footprints
   const reserve = (x: number, z: number, r: number) => {
@@ -299,61 +422,122 @@ export function buildProps(): PropSet {
   reserve((PADS.plains.x0 + PADS.plains.x1) / 2, PADS.plains.z0 - 2.4, 3.2)
   reserve(PADS.workshop.x0 + 4, PADS.workshop.z0 - 2.2, 3.4)
   reserve(PADS.workshop.x1 + 1.8, PADS.workshop.z0 + 1, 1.6)
-  reserve(5, 16, 2) // windmill
-  reserve(13, 13, 1.6) // waterwheel
+  reserve(WINDMILL[0], WINDMILL[1], 2)
+  const [wwx, wwz] = waterwheelSpot()
+  reserve(wwx, wwz, 1.6)
+  for (const l of Object.values(LANDMARKS)) reserve(l.x, l.z, 3.2)
 
   const fv = freezerVault()
-  set.base.push(...fv.base)
-  set.ice.push(...fv.ice)
+  set.base.push(...solid(fv.base))
+  set.ice.push(...solid(fv.ice))
   set.glow.push(...fv.glow)
   const cc = coolCellar()
-  set.base.push(...cc.base)
+  set.base.push(...solid(cc.base))
   set.glow.push(...cc.glow)
   const ps = pantryShed()
-  set.base.push(...ps.base)
+  set.base.push(...solid(ps.base))
   set.glass.push(...ps.glass)
   const ws = workshop()
-  set.base.push(...ws.base)
+  set.base.push(...solid(ws.base))
   set.glass.push(...ws.glass)
   const hs = homestead()
-  set.base.push(...hs.base)
+  set.base.push(...solid(hs.base))
   set.glow.push(...hs.glow)
+  set.colliders.push(trunk(WINDMILL[0], WINDMILL[1], 0.85))
 
   // Frostlands
-  scatter('frostlands', 4, 11, 3, taken, clearView).forEach(([x, z], i) => set.ice.push(...iceSpire(x, z, 3 + (i % 3) * 1.5, 100 + i)))
-  scatter('frostlands', 9, 12, 2.4, taken, clearView).forEach(([x, z], i) => set.base.push(...pine(x, z, 0.8 + hash2(x, z) * 0.45 + (i % 2) * 0.1)))
-  scatter('frostlands', 4, 13, 1.6, taken).forEach(([x, z]) => set.base.push(...rock(x, z, '#a9b8c7')))
+  scatter('frostlands', 5, 11, 3, taken, clearView).forEach(([x, z], i) => set.ice.push(...solid(iceSpire(x, z, 3 + (i % 3) * 1.5, 100 + i))))
+  scatter('frostlands', 11, 12, 2.4, taken, clearView).forEach(([x, z], i) => {
+    set.base.push(...pine(x, z, 0.8 + hash2(x, z) * 0.45 + (i % 2) * 0.1))
+    set.colliders.push(trunk(x, z))
+  })
+  scatter('frostlands', 5, 13, 1.6, taken).forEach(([x, z]) => set.base.push(...solid(rock(x, z, '#a9b8c7'))))
+
+  // Highland: sparse pines and boulders on the terraces, the cairn on top.
+  scatter('highland', 16, 14, 3, taken).forEach(([x, z]) => {
+    set.base.push(...pine(x, z, 0.7 + hash2(x, z) * 0.3))
+    set.colliders.push(trunk(x, z))
+  })
+  scatter('highland', 10, 15, 2, taken).forEach(([x, z]) => set.base.push(...solid(rock(x, z, '#b6bcc4'))))
+  set.base.push(...solid(cairn(LANDMARKS.lookout.x - 1, LANDMARKS.lookout.z - 0.5)))
 
   // Cold Grove
-  scatter('coldgrove', 8, 21, 2.4, taken, clearView).forEach(([x, z]) => set.base.push(...birch(x, z)))
-  scatter('coldgrove', 9, 22, 1.4, taken).forEach(([x, z]) => set.base.push(...shrub(x, z, '#4fa58c', true)))
-  scatter('coldgrove', 3, 23, 1.4, taken).forEach(([x, z]) => set.base.push(...rock(x, z, '#8b979e')))
+  scatter('coldgrove', 9, 21, 2.4, taken, clearView).forEach(([x, z]) => {
+    set.base.push(...birch(x, z))
+    set.colliders.push(trunk(x, z))
+  })
+  scatter('coldgrove', 10, 22, 1.4, taken).forEach(([x, z]) => set.base.push(...shrub(x, z, '#4fa58c', true)))
+  scatter('coldgrove', 3, 23, 1.4, taken).forEach(([x, z]) => set.base.push(...solid(rock(x, z, '#8b979e'))))
+
+  // Forest: a dense birch-and-pine stand around a clearing.
+  scatter('forest', 46, 24, 2.1, taken).forEach(([x, z], i) => {
+    set.base.push(...(i % 3 === 0 ? pine(x, z, 0.9 + hash2(x, z) * 0.4) : birch(x, z)))
+    set.colliders.push(trunk(x, z))
+  })
+  scatter('forest', 14, 25, 1.3, taken).forEach(([x, z]) => set.base.push(...shrub(x, z, '#3f8f6a', false)))
+  {
+    // a log bench in the clearing
+    const { x, z } = LANDMARKS.forest
+    const y = heightAt(x, z - 1.8)
+    set.base.push(...solid([b([x, y + 0.25, z - 1.8], [2.2, 0.5, 0.6], '#7a512d')]))
+  }
 
   // Sunlit Plains
-  scatter('plains', 6, 31, 3, taken, clearView).forEach(([x, z]) => set.base.push(...oak(x, z, 0.85 + hash2(x, z) * 0.35)))
-  const wheat = scatter('plains', 3, 32, 2.2, taken)
-  wheat.forEach(([wx, wz]) => {
-    for (let dx = -1; dx <= 1; dx++)
-      for (let dz = -1; dz <= 1; dz++) {
-        const x = wx + dx * 0.45
-        const z = wz + dz * 0.45
-        const y = heightAt(wx, wz)
-        const hh = 0.5 + hash2(Math.round(x * 10), Math.round(z * 10)) * 0.3
-        set.base.push(b([x, y + hh / 2, z], [0.16, hh, 0.16], '#e2c35b'))
-      }
+  scatter('plains', 7, 31, 3, taken, clearView).forEach(([x, z]) => {
+    set.base.push(...oak(x, z, 0.85 + hash2(x, z) * 0.35))
+    set.colliders.push(trunk(x, z, 0.35))
   })
   scatter('plains', 5, 33, 1.6, taken).forEach(([x, z]) => set.base.push(...shrub(x, z, '#5aa843', false)))
 
+  // Orchard rows, and wheat on the tilled strips.
+  for (const c of terrain().cells) {
+    if (c.region !== 'orchard' || !isFree(c.x, c.z)) continue
+    if (c.top === 'field') {
+      for (const dx of [-0.25, 0.25]) {
+        const hh = 0.5 + hash2(c.x * 3 + (dx > 0 ? 1 : 0), c.z, 9) * 0.3
+        set.base.push(b([c.x + dx, c.h + hh / 2, c.z], [0.16, hh, 0.7], '#e2c35b'))
+      }
+    } else if ((c.x + 100) % 3 === 2 && (c.z + 100) % 3 === 0 && !taken.some(([x, z]) => Math.hypot(x - c.x, z - c.z) < 2)) {
+      set.base.push(...fruitTree(c.x, c.z, c.x * 7 + c.z))
+      set.colliders.push(trunk(c.x, c.z))
+      taken.push([c.x, c.z])
+    }
+  }
+
+  // Meadow: a few lone oaks and bushes on the hills.
+  scatter('meadow', 7, 34, 4, taken).forEach(([x, z]) => {
+    set.base.push(...oak(x, z, 0.8 + hash2(x, z) * 0.3))
+    set.colliders.push(trunk(x, z, 0.35))
+  })
+  scatter('meadow', 8, 35, 1.6, taken).forEach(([x, z]) => set.base.push(...shrub(x, z, '#5aa843', false)))
+
+  // Wetland: reeds along the water's edge; more grow back as the world recovers.
+  const edgeOfWater = (x: number, z: number) =>
+    [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ].some(([dx, dz]) => !!cellAt(x + dx, z + dz)?.water)
+  terrain()
+    .cells.filter((c) => (c.region === 'wetland' || c.region === 'workshop') && !c.water && !c.pad && edgeOfWater(c.x, c.z) && !taken.some(([x, z]) => Math.hypot(x - c.x, z - c.z) < 1.5))
+    .forEach((c, i) => (i % 2 ? set.flowers : set.base).push(...reeds(c.x, c.z)))
+  scatter('wetland', 8, 36, 2.6, taken).forEach(([x, z]) => {
+    set.base.push(...birch(x, z))
+    set.colliders.push(trunk(x, z))
+  })
+
   // Workshop: dry growth that becomes saplings/trees with vitality
-  scatter('workshop', 7, 41, 2.2, taken, clearView).forEach(([x, z]) => {
+  scatter('workshop', 8, 41, 2.2, taken, clearView).forEach(([x, z]) => {
     set.dead.push(...deadBush(x, z))
     set.grown.push(...oak(x, z, 0.7 + hash2(x, z) * 0.25))
   })
 
   // Flowers across the island (stage 2+)
   const flowerColors = ['#f25f5c', '#ffd23f', '#ffffff', '#b38cff', '#ff9ec7']
-  for (const region of ['plains', 'workshop', 'coldgrove', 'path'] as const) {
-    const pts = scatter(region, region === 'path' ? 10 : 14, 50 + region.length, 0.9, [...taken], (x, z) => !cellAt(x, z)?.water)
+  for (const region of ['plains', 'workshop', 'coldgrove', 'path', 'meadow', 'orchard', 'wetland'] as const) {
+    const count = region === 'meadow' ? 26 : 14
+    const pts = scatter(region, count, 50 + region.length * 7, 0.9, [...taken], (x, z) => !cellAt(x, z)?.water)
     pts.forEach(([x, z], i) => {
       const y = heightAt(x, z)
       const ox = (hash2(x, z, 7) - 0.5) * 0.5
@@ -364,16 +548,42 @@ export function buildProps(): PropSet {
     })
   }
 
-  // Lanterns along the paths (stage 5)
-  const lanternSpots: [number, number][] = [
-    [1.8, 8], [-1.8, 8], [1.8, -8], [-1.8, -8], [8, 1.8], [8, -1.8], [-8, 1.8], [-8, -1.8], [1.8, 14], [-1.8, -14], [14, -1.8], [-14, 1.8],
-  ]
+  // Lanterns along the paths (stage 5): the cross through the plaza and the outer ring.
+  const lanternSpots: [number, number][] = []
+  for (const r of [8, 15, 22]) lanternSpots.push([1.8, r], [-1.8, -r], [r, -1.8], [-r, 1.8])
+  for (let a = 0; a < 12; a++) {
+    const ang = (a / 12) * Math.PI * 2 + Math.PI / 12
+    lanternSpots.push([Math.cos(ang) * (RING_RADIUS + 1.7), Math.sin(ang) * (RING_RADIUS + 1.7)])
+  }
   for (const [x, z] of lanternSpots) {
-    if (!cellAt(x, z)) continue
+    const c = cellAt(x, z)
+    if (!c || c.water || c.solid) continue
     const y = heightAt(x, z)
     set.base.push(b([x, y + 0.7, z], [0.14, 1.4, 0.14], '#4a3626'))
     set.lanterns.push(b([x, y + 1.55, z], [0.34, 0.36, 0.34], '#ffd27a', [x, y + 1.4, z]))
+    set.colliders.push(trunk(x, z, 0.12))
   }
+
+  // Signposts where each landmark path leaves the ring.
+  for (const l of Object.values(LANDMARKS)) {
+    const a = Math.atan2(l.z, l.x)
+    const px = Math.cos(a) * (RING_RADIUS + 1.4) - Math.sin(a) * 1.6
+    const pz = Math.sin(a) * (RING_RADIUS + 1.4) + Math.cos(a) * 1.6
+    const c = cellAt(px, pz)
+    if (!c || c.water || c.solid) continue
+    set.base.push(...signpost(px, pz, a))
+    set.colliders.push(trunk(px, pz, 0.12))
+  }
+
+  // Distant islets out past the edge: scenery only, for a sense of distance.
+  const isletSpots: [number, number, number, number][] = [
+    [-52, 6, -30, 2.6],
+    [48, -2, -38, 2],
+    [56, 9, 18, 3],
+    [-44, -6, 40, 2.2],
+    [8, 12, -60, 2.4],
+  ]
+  isletSpots.forEach(([x, y, z, size], i) => set.base.push(...islet(x, y, z, size, 300 + i)))
 
   cached = set
   return set

@@ -4,7 +4,7 @@ import * as THREE from 'three'
 import { BoxInstances, unitBox } from './BoxInstances'
 import { fx, growAt } from './fx'
 import { createPropMaterial } from './materials'
-import { buildProps } from './propData'
+import { buildProps, waterwheelSpot, WINDMILL } from './propData'
 import { heightAt, isStream, POND, STREAM_LEVEL, terrain } from './terrainData'
 
 const growFlowers = () => growAt(2)
@@ -41,8 +41,7 @@ export function Props() {
 function Windmill() {
   const blades = useRef<THREE.Group>(null)
   const speed = useRef(0)
-  const x = 5
-  const z = 16
+  const [x, z] = WINDMILL
   const y = heightAt(x, z)
   useFrame((_, dt) => {
     const target = fx.reducedMotion ? 0 : 0.15 + growAt(4) * 1.4
@@ -85,8 +84,7 @@ function Windmill() {
 function Waterwheel() {
   const wheel = useRef<THREE.Group>(null)
   const speed = useRef(0)
-  const x = 13
-  const z = 13
+  const [x, z] = useMemo(waterwheelSpot, [])
   useFrame((_, dt) => {
     const target = fx.reducedMotion ? 0 : growAt(3) * 0.9
     speed.current += (target - speed.current) * Math.min(1, dt * 1.2)
@@ -115,7 +113,7 @@ function Waterwheel() {
   )
 }
 
-/** Pond (always present) and stream (refills as the world recovers). */
+/** Pond, river and wetland pools (always present) and the workshop stream (refills as the world recovers). */
 function Water() {
   const pond = useRef<THREE.InstancedMesh>(null)
   const stream = useRef<THREE.InstancedMesh>(null)
@@ -130,7 +128,7 @@ function Water() {
   const pondMatrices = useMemo(() => {
     const m = new THREE.Matrix4()
     return terrain()
-      .cells.filter((c) => c.water === 'pond')
+      .cells.filter((c) => c.water === 'pond' || c.water === 'river' || c.water === 'marsh')
       .map((c) => m.makeScale(1, 0.2, 1).setPosition(c.x, POND.level - 0.1, c.z).clone())
   }, [])
   const streamCells = useMemo(() => terrain().cells.filter((c) => c.water === 'stream' && isStream(c.x, c.z)), [])
@@ -163,6 +161,7 @@ function Water() {
         }}
         args={[unitBox, pondMat, Math.max(1, pondMatrices.length)]}
         frustumCulled={false}
+        receiveShadow
       />
       <instancedMesh
         ref={(m) => {

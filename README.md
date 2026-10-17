@@ -51,6 +51,9 @@ npm run dev:host     # dev server reachable from other devices on your network
    **Add product** and **Before you buy**. In the world, drag to orbit, scroll or pinch to zoom, and use the zone chips
    (Freezer = Frostlands, Refrigerator = Cold Grove, Pantry = Sunlit Plains, Counter & arrivals = Homestead, Reuse & sort =
    Circularity Workshop). **Menu → List only** hides the 3D world.
+   **Walk** (next to **Overview**, at the start of the zone row) lets you explore on foot with a laptop keyboard and
+   touchpad. Use W A S D or the arrows, press-and-slide (or swipe two fingers) to look, **E** or a click to open the
+   highlighted item, and **Esc** to leave. See [`docs/consumer-journeys.md`](docs/consumer-journeys.md#walk-mode-optional).
 3. **Mismatch:** the Whole Milk is recorded on the *counter*, but its label says *refrigerate*. It carries an amber badge, and a dashed
    golden arc leads to a ghost in the Cold Grove. Open it from **My items** (or tap it): the panel's **Next step** explains why. Press **I’ve moved it to the
    refrigerator**: the item glides across the island and the world grows (Dormant → Stirring).
@@ -104,13 +107,14 @@ src/
     persistence.ts     versioned persistence, migration, validation, safe storage
     qrDecode.ts        camera / image QR decoding helpers
   world/             React Three Fiber scene (lazy-loaded)
-    terrainData.ts     deterministic procedural floating island
-    Terrain.tsx        instanced voxel terrain with procedural seam/grain shader
-    propData.ts        trees, ice spires, vault, cellar, pantry shed, workshop, counter…
-    Props.tsx          instanced props, windmill, waterwheel, pond and stream
+    terrainData.ts     deterministic island: storage zones, outer landscapes, paths, water; walkable by construction
+    Terrain.tsx        face-culled voxel terrain chunks with procedural seam/grain shader
+    propData.ts        trees, ice spires, vault, cellar, pantry shed, workshop, counter…, plus walking colliders
+    Props.tsx          instanced props, windmill, waterwheel, pond, river, wetland and stream
     Products.tsx       product models, selection, badges, mismatch ghosts and arcs
     Effects.tsx        snow, pollen, clouds, completion bursts
-    CameraRig.tsx      orbit controls + zone/item fly-to
+    CameraRig.tsx      orbit controls + zone/item fly-to (Overview)
+    walk/              optional first-person Walk mode: key scoping, grid collision, fixed-step movement, rig
   ui/                Interface (panels, coaches, add flow, onboarding, list view…)
 ```
 
@@ -151,3 +155,6 @@ motion · lucide-react · jsQR · qrcode · Vitest. All 3D content is generated 
 - The three.js/R3F bundle is ~320 kB gzipped. It is lazy-loaded after the UI shell and shared by the landing page and `/world`.
 - Leaving `/world` with the browser Back button reloads the landing page (drei's `<Html>` labels can't be unmounted in place).
 - Similarity matching in *Before you buy* is keyword/category based and can miss or over-match items.
+- Walk mode is tested with emulated keyboard, mouse-drag and wheel input. A physical touchpad needs the manual check in
+  [`docs/consumer-journeys.md`](docs/consumer-journeys.md#manual-touchpad-check-not-automated).
+- In walk mode, zone and landmark labels show through walls: they are wayfinding signs, not part of the scene.

@@ -25,7 +25,11 @@ export function TopBar({ webgl }: { webgl: boolean }) {
         setConfirmReset(false)
       }
     }
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setMenu(false)
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setMenu(false)
+    }
     window.addEventListener('pointerdown', close)
     window.addEventListener('keydown', key)
     return () => {

@@ -1,7 +1,6 @@
 import { useFrame } from '@react-three/fiber'
-import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
-import { unitBox } from './BoxInstances'
 import { fx } from './fx'
 import { createVoxelMaterial } from './materials'
 import { hash2 } from './noise'
@@ -20,6 +19,11 @@ const TOP: Record<Block, string> = {
   plaza: '#d3c4aa',
   path: '#bea67f',
   streambed: '#9c8a6c',
+  stone: '#a3a7ad',
+  forestfloor: '#4f9a5c',
+  field: '#8c6a45',
+  marsh: '#6f8a6a',
+  bridge: '#a87443',
 }
 
 const SOIL: Partial<Record<Block, string>> = {
@@ -31,6 +35,8 @@ const SOIL: Partial<Record<Block, string>> = {
   deck: '#8a6142',
   plaza: '#9a8a74',
   workfloor: '#8f8a83',
+  stone: '#8c9096',
+  bridge: '#7a512d',
 }
 
 const WITHERED = new THREE.Color('#ad9f78')
@@ -39,7 +45,8 @@ const DRY_BED = new THREE.Color('#a8957a')
 const WET_BED = new THREE.Color('#5f6f62')
 
 const CAP = 0.34
-const tmpM = new THREE.Matrix4()
+const CHUNK = 16
+const COLD = new Set(['frostlands', 'highland'])
 const tmpC = new THREE.Color()
 
 function jitter(c: THREE.Color, x: number, z: number, amt = 0.05) {
@@ -47,55 +54,157 @@ function jitter(c: THREE.Color, x: number, z: number, amt = 0.05) {
   return c.offsetHSL(0, 0, j)
 }
 
+const capHeight = (c: Cell) => (c.top === 'deck' || c.top === 'icetile' || c.top === 'workfloor' || c.top === 'plaza' || c.top === 'bridge' ? 0.5 : CAP)
+
+/** The three layers of a column, top to bottom: a thin cap, soil, then stone tapering into the underside. */
+function layers(c: Cell): { top: number; bottom: number; color: THREE.Color; cap?: boolean }[] {
+  const capH = capHeight(c)
+  return [
+    { top: c.h, bottom: c.h - capH, color: jitter(new THREE.Color(TOP[c.top]), c.x, c.z), cap: true },
+    { top: c.h - capH, bottom: c.h - 3, color: jitter(new THREE.Color(SOIL[c.top] ?? '#8a6142'), c.x, c.z, 0.04) },
+    { top: c.h - 3, bottom: Math.min(c.h - 3, c.bottom), color: jitter(new THREE.Color(COLD.has(c.region) ? '#97a6b8' : '#8c8b8f'), c.x, c.z, 0.06) },
+  ].filter((l) => l.top - l.bottom > 0.001)
+}
+
+const SIDES: { dx: number; dz: number; n: [number, number, number] }[] = [
+  { dx: 1, dz: 0, n: [1, 0, 0] },
+  { dx: -1, dz: 0, n: [-1, 0, 0] },
+  { dx: 0, dz: 1, n: [0, 0, 1] },
+  { dx: 0, dz: -1, n: [0, 0, -1] },
+]
+
+interface ChunkGeometry {
+  geometry: THREE.BufferGeometry
+  /** Vertex ranges of cap faces whose colour follows world vitality (healing meadow, refilling stream). */
+  dynamic: { cell: Cell; start: number; count: number }[]
+}
+
 /**
- * The island as three instances per column: a thin top cap (grass/snow side strip),
- * a soil layer and a stone column tapering down into the floating underside.
+ * One merged mesh per chunk with only the faces that can be seen: every top, the underside, and
+ * side faces only where a neighbour doesn't cover them (steps, banks, the island edge). Hidden
+ * faces between columns are never drawn.
  */
-export function Terrain() {
-  const ref = useRef<THREE.InstancedMesh>(null)
-  const material = useMemo(() => createVoxelMaterial(), [])
-  const { cells } = terrain()
+function buildChunk(cells: Cell[], map: Map<string, Cell>): ChunkGeometry {
+  const pos: number[] = []
+  const nor: number[] = []
+  const col: number[] = []
+  const idx: number[] = []
+  const dynamic: ChunkGeometry['dynamic'] = []
+
+  const quad = (corners: number[][], n: [number, number, number], c: THREE.Color) => {
+    const base = pos.length / 3
+    for (const v of corners) {
+      pos.push(v[0], v[1], v[2])
+      nor.push(...n)
+      col.push(c.r, c.g, c.b)
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
+    return base
+  }
+
+  for (const c of cells) {
+    const x0 = c.x - 0.5
+    const x1 = c.x + 0.5
+    const z0 = c.z - 0.5
+    const z1 = c.z + 0.5
+    const ls = layers(c)
+    const isDynamic = c.top === 'meadow' || (c.water === 'stream' && c.top === 'streambed')
+    const capStart = pos.length / 3
+    // top (counter-clockwise seen from above)
+    quad(
+      [
+        [x0, c.h, z1],
+        [x1, c.h, z1],
+        [x1, c.h, z0],
+        [x0, c.h, z0],
+      ],
+      [0, 1, 0],
+      ls[0].color,
+    )
+    // underside
+    const low = ls[ls.length - 1]
+    quad(
+      [
+        [x0, low.bottom, z0],
+        [x1, low.bottom, z0],
+        [x1, low.bottom, z1],
+        [x0, low.bottom, z1],
+      ],
+      [0, -1, 0],
+      low.color,
+    )
+    for (const s of SIDES) {
+      const nb = map.get(`${c.x + s.dx},${c.z + s.dz}`)
+      // the neighbour column covers [nb.bottom, nb.h]; draw what's left of each layer
+      const coverTop = nb ? nb.h : -Infinity
+      const coverBottom = nb ? Math.min(nb.h - 3, nb.bottom) : -Infinity
+      for (const l of ls) {
+        const parts: [number, number][] = []
+        if (!nb) parts.push([l.bottom, l.top])
+        else {
+          if (l.top > coverTop) parts.push([Math.max(l.bottom, coverTop), l.top])
+          if (l.bottom < coverBottom) parts.push([l.bottom, Math.min(l.top, coverBottom)])
+        }
+        for (const [b, t] of parts) {
+          if (t - b < 0.001) continue
+          let corners: number[][]
+          if (s.dx === 1)
+            corners = [
+              [x1, b, z1],
+              [x1, b, z0],
+              [x1, t, z0],
+              [x1, t, z1],
+            ]
+          else if (s.dx === -1)
+            corners = [
+              [x0, b, z0],
+              [x0, b, z1],
+              [x0, t, z1],
+              [x0, t, z0],
+            ]
+          else if (s.dz === 1)
+            corners = [
+              [x0, b, z1],
+              [x1, b, z1],
+              [x1, t, z1],
+              [x0, t, z1],
+            ]
+          else
+            corners = [
+              [x1, b, z0],
+              [x0, b, z0],
+              [x0, t, z0],
+              [x1, t, z0],
+            ]
+          const start = quad(corners, s.n, l.color)
+          if (l.cap && isDynamic) dynamic.push({ cell: c, start, count: 4 })
+        }
+      }
+    }
+    if (isDynamic) dynamic.push({ cell: c, start: capStart, count: 4 })
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+  geometry.setIndex(idx)
+  geometry.computeBoundingSphere()
+  geometry.computeBoundingBox()
+  return { geometry, dynamic }
+}
+
+function Chunk({ chunk, material }: { chunk: ChunkGeometry; material: THREE.Material }) {
   const lastV = useRef(-1)
-
-  const dynamic = useMemo(
-    () => cells.map((c, i) => ({ c, i })).filter(({ c }) => c.top === 'meadow' || (c.water === 'stream' && c.top === 'streambed')),
-    [cells],
-  )
-
-  useLayoutEffect(() => {
-    const mesh = ref.current
-    if (!mesh) return
-    cells.forEach((c: Cell, i) => {
-      const capH = c.top === 'deck' || c.top === 'icetile' || c.top === 'workfloor' || c.top === 'plaza' ? 0.5 : CAP
-      // cap
-      tmpM.makeScale(1, capH, 1).setPosition(c.x, c.h - capH / 2, c.z)
-      mesh.setMatrixAt(i * 3, tmpM)
-      mesh.setColorAt(i * 3, jitter(tmpC.set(TOP[c.top]), c.x, c.z))
-      // soil
-      const soilTop = c.h - capH
-      const soilBottom = c.h - 3
-      tmpM.makeScale(1, soilTop - soilBottom, 1).setPosition(c.x, (soilTop + soilBottom) / 2, c.z)
-      mesh.setMatrixAt(i * 3 + 1, tmpM)
-      mesh.setColorAt(i * 3 + 1, jitter(tmpC.set(SOIL[c.top] ?? '#8a6142'), c.x, c.z, 0.04))
-      // stone
-      const stoneH = Math.max(0.01, soilBottom - c.bottom)
-      tmpM.makeScale(1, stoneH, 1).setPosition(c.x, soilBottom - stoneH / 2, c.z)
-      mesh.setMatrixAt(i * 3 + 2, tmpM)
-      mesh.setColorAt(i * 3 + 2, jitter(tmpC.set(c.region === 'frostlands' ? '#97a6b8' : '#8c8b8f'), c.x, c.z, 0.06))
-    })
-    mesh.instanceMatrix.needsUpdate = true
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-    mesh.computeBoundingSphere()
-    lastV.current = -1
-  }, [cells])
+  useEffect(() => () => chunk.geometry.dispose(), [chunk])
 
   // Workshop meadow heals and the stream bed darkens as vitality rises.
   useFrame(() => {
-    const mesh = ref.current
-    if (!mesh || Math.abs(fx.vitality - lastV.current) < 0.01) return
+    if (!chunk.dynamic.length || Math.abs(fx.vitality - lastV.current) < 0.01) return
     lastV.current = fx.vitality
     const v = fx.vitality
-    for (const { c, i } of dynamic) {
+    const attr = chunk.geometry.getAttribute('color') as THREE.BufferAttribute
+    for (const { cell: c, start, count } of chunk.dynamic) {
       if (c.top === 'meadow') {
         const threshold = hash2(c.x, c.z, 5) * 0.85 + 0.1
         const t = Math.min(1, Math.max(0, (v / 2.4 - threshold) * 4))
@@ -103,10 +212,34 @@ export function Terrain() {
       } else {
         tmpC.copy(DRY_BED).lerp(WET_BED, Math.min(1, Math.max(0, v - 2.2)))
       }
-      mesh.setColorAt(i * 3, jitter(tmpC, c.x, c.z))
+      jitter(tmpC, c.x, c.z)
+      for (let i = start; i < start + count; i++) attr.setXYZ(i, tmpC.r, tmpC.g, tmpC.b)
     }
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    attr.needsUpdate = true
   })
 
-  return <instancedMesh ref={ref} args={[unitBox, material, cells.length * 3]} castShadow receiveShadow frustumCulled={false} />
+  return <mesh geometry={chunk.geometry} material={material} castShadow receiveShadow />
+}
+
+/** The island, as 16×16 chunks of merged, face-culled geometry sharing one material. */
+export function Terrain() {
+  const material = useMemo(() => createVoxelMaterial({ vertexColors: true }), [])
+  const chunks = useMemo(() => {
+    const { cells, map } = terrain()
+    const byKey = new Map<string, Cell[]>()
+    for (const c of cells) {
+      const key = `${Math.floor(c.x / CHUNK)},${Math.floor(c.z / CHUNK)}`
+      let list = byKey.get(key)
+      if (!list) byKey.set(key, (list = []))
+      list.push(c)
+    }
+    return [...byKey.entries()].map(([key, list]) => ({ key, chunk: buildChunk(list, map) }))
+  }, [])
+  return (
+    <group>
+      {chunks.map(({ key, chunk }) => (
+        <Chunk key={key} chunk={chunk} material={material} />
+      ))}
+    </group>
+  )
 }

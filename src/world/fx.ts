@@ -6,6 +6,10 @@ export const fx = {
   vitality: 0,
   target: 0,
   reducedMotion: false,
+  /** Ground point the view is centred on (orbit target or the walker), for the shadow camera. */
+  focusX: 0,
+  focusZ: 0,
+  walking: false,
 }
 
 export const clamp01 = (v: number) => Math.min(1, Math.max(0, v))

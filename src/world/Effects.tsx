@@ -8,18 +8,18 @@ import { ARRIVAL, type Layout } from './layout'
 import { rng } from './noise'
 import { heightAt, PADS, ZONE_CENTER } from './terrainData'
 
-/** Falling snow over the Frostlands. */
+/** Falling snow over the Frostlands and the highland behind it. */
 export function Snow() {
-  const COUNT = 260
+  const COUNT = 420
   const ref = useRef<THREE.Points>(null)
   const { positions, speeds } = useMemo(() => {
     const r = rng(4)
     const positions = new Float32Array(COUNT * 3)
     const speeds = new Float32Array(COUNT)
     for (let i = 0; i < COUNT; i++) {
-      positions[i * 3] = -19 + r() * 17
+      positions[i * 3] = -32 + r() * 28
       positions[i * 3 + 1] = 3 + r() * 10
-      positions[i * 3 + 2] = -19 + r() * 17
+      positions[i * 3 + 2] = -32 + r() * 28
       speeds[i] = 0.6 + r() * 0.8
     }
     return { positions, speeds }
@@ -48,7 +48,7 @@ export function Snow() {
 
 /** Drifting pollen and fireflies over the Plains and Workshop; denser as vitality grows. */
 export function Pollen() {
-  const COUNT = 120
+  const COUNT = 200
   const ref = useRef<THREE.Points>(null)
   const matRef = useRef<THREE.PointsMaterial>(null)
   const base = useMemo(() => {
@@ -56,9 +56,9 @@ export function Pollen() {
     const a = new Float32Array(COUNT * 3)
     for (let i = 0; i < COUNT; i++) {
       const right = i % 2 === 0
-      a[i * 3] = right ? 3 + r() * 16 : -19 + r() * 16
+      a[i * 3] = right ? 3 + r() * 26 : -29 + r() * 26
       a[i * 3 + 1] = 2.6 + r() * 3.5
-      a[i * 3 + 2] = 3 + r() * 16
+      a[i * 3 + 2] = 3 + r() * 26
     }
     return a
   }, [])
@@ -85,36 +85,42 @@ export function Pollen() {
   )
 }
 
-/** Blocky clouds circling the floating island. */
+/** Blocky clouds circling the floating island, drawn as one instanced mesh. */
 export function Clouds() {
   const ref = useRef<THREE.Group>(null)
-  const clouds = useMemo(() => {
+  const parts = useMemo(() => {
     const r = rng(17)
-    return Array.from({ length: 9 }, (_, i) => {
-      const a = (i / 9) * Math.PI * 2 + r() * 0.4
-      const d = 27 + r() * 10
+    const m = new THREE.Matrix4()
+    const out: THREE.Matrix4[] = []
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + r() * 0.4
+      const d = 44 + r() * 14
       const y = i % 3 === 0 ? -9 - r() * 5 : 9 + r() * 8
-      const parts = Array.from({ length: 3 + Math.floor(r() * 3) }, () => ({
-        p: [(r() - 0.5) * 4, (r() - 0.5) * 0.8, (r() - 0.5) * 2] as [number, number, number],
-        s: [2 + r() * 3, 0.9 + r() * 0.8, 1.6 + r() * 1.6] as [number, number, number],
-      }))
-      return { pos: [Math.cos(a) * d, y, Math.sin(a) * d] as [number, number, number], parts }
-    })
+      const n = 3 + Math.floor(r() * 3)
+      for (let j = 0; j < n; j++) {
+        const px = Math.cos(a) * d + (r() - 0.5) * 6
+        const py = y + (r() - 0.5) * 1
+        const pz = Math.sin(a) * d + (r() - 0.5) * 3
+        out.push(m.makeScale(3 + r() * 4, 1.2 + r() * 1, 2.4 + r() * 2.4).setPosition(px, py, pz).clone())
+      }
+    }
+    return out
   }, [])
+  const material = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, transparent: true, opacity: 0.92 }), [])
   useFrame((_, dt) => {
     if (ref.current && !fx.reducedMotion) ref.current.rotation.y += dt * 0.012
   })
   return (
     <group ref={ref}>
-      {clouds.map((c, i) => (
-        <group key={i} position={c.pos}>
-          {c.parts.map((p, j) => (
-            <mesh key={j} geometry={unitBox} position={p.p} scale={p.s}>
-              <meshStandardMaterial color="#ffffff" roughness={1} transparent opacity={0.92} />
-            </mesh>
-          ))}
-        </group>
-      ))}
+      <instancedMesh
+        ref={(mesh) => {
+          if (!mesh) return
+          parts.forEach((mx, i) => mesh.setMatrixAt(i, mx))
+          mesh.instanceMatrix.needsUpdate = true
+        }}
+        args={[unitBox, material, parts.length]}
+        frustumCulled={false}
+      />
     </group>
   )
 }

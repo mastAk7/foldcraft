@@ -12,6 +12,7 @@ import { unitBox } from './BoxInstances'
 import { fx } from './fx'
 import type { Layout, Vec3 } from './layout'
 import { SHAPE_PARTS } from './productModels'
+import { useWalk } from './walk/walkState'
 
 const PRODUCT_SCALE = 1.5
 
@@ -79,6 +80,8 @@ function ProductObject({ item, pos, badge, dim, named }: { item: ConsumerItem; p
   const [hover, setHover] = useState(false)
   const selected = useWorld((s) => s.selectedId === item.id)
   const select = useWorld((s) => s.select)
+  // Walk mode: the item you're facing (or pointing at) is what E or a click opens.
+  const targeted = useWalk((s) => s.mode === 'walk' && (s.hoverId ?? s.targetId) === item.id)
   const current = useRef(new THREE.Vector3(...pos))
   const target = useMemo(() => new THREE.Vector3(...pos), [pos])
   const seed = useMemo(() => (item.id.charCodeAt(0) + item.id.charCodeAt(1)) % 10, [item.id])
@@ -95,7 +98,7 @@ function ProductObject({ item, pos, badge, dim, named }: { item: ConsumerItem; p
     g.position.set(current.current.x, current.current.y + lift + hop, current.current.z)
     const targetRot = selected && !fx.reducedMotion ? g.rotation.y + dt * 0.9 : Math.sin(t * 0.5 + seed) * 0.12
     g.rotation.y = selected ? targetRot : THREE.MathUtils.lerp(g.rotation.y, targetRot, Math.min(1, dt * 3))
-    const s = hover || selected ? 1.15 : 1
+    const s = hover || selected || targeted ? 1.15 : 1
     g.scale.lerp(new THREE.Vector3(s, s, s), Math.min(1, dt * 10))
     if (ring.current) {
       ring.current.rotation.z += dt * 0.8
@@ -106,6 +109,8 @@ function ProductObject({ item, pos, badge, dim, named }: { item: ConsumerItem; p
 
   const onClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation()
+    // When walking, the walk rig handles clicks itself, so a drag to look never opens an item.
+    if (useWalk.getState().mode === 'walk') return
     select(item.id)
   }
 
@@ -119,10 +124,12 @@ function ProductObject({ item, pos, badge, dim, named }: { item: ConsumerItem; p
           e.stopPropagation()
           setHover(true)
           document.body.style.cursor = 'pointer'
+          if (useWalk.getState().mode === 'walk') useWalk.getState().setHover(item.id)
         }}
         onPointerOut={() => {
           setHover(false)
           document.body.style.cursor = ''
+          if (useWalk.getState().hoverId === item.id) useWalk.getState().setHover(null)
         }}
       >
         <group scale={dim ? 1.25 : PRODUCT_SCALE}>
@@ -130,22 +137,22 @@ function ProductObject({ item, pos, badge, dim, named }: { item: ConsumerItem; p
         </group>
         {/* generous invisible hit box for easy touch selection */}
         <mesh geometry={unitBox} position={[0, 0.75, 0]} scale={[1.5, 1.8, 1.5]} visible={false} />
-        {(selected || badge === 'mismatch') && (
+        {(selected || targeted || badge === 'mismatch') && (
           <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
             <ringGeometry args={[0.82, 1.0, 4, 1]} />
-            <meshBasicMaterial color={selected ? '#ffffff' : '#ffb020'} transparent opacity={0.9} toneMapped={false} />
+            <meshBasicMaterial color={selected || targeted ? '#ffffff' : '#ffb020'} transparent opacity={0.9} toneMapped={false} />
           </mesh>
         )}
         {/* Kept mounted (content toggles) to avoid re-creating drei Html roots mid-render. */}
         <Html position={[0, 2.05, 0]} center zIndexRange={[20, 0]} style={{ pointerEvents: 'none' }}>
-          <div className="world-tag" data-selected={selected || undefined}>
+          <div className="world-tag" data-selected={selected || targeted || undefined}>
             {meta && (
               <span className={`world-badge ${meta.cls}`} aria-label={meta.label}>
                 <meta.Icon size={12} strokeWidth={2.6} />
               </span>
             )}
             {/* Names show on hover, on selection, and for every item in the zone you're looking at (touch has no hover). */}
-            {(hover || selected || named) && <span className="world-tag-name">{item.record.name}</span>}
+            {(hover || selected || targeted || named) && <span className="world-tag-name">{item.record.name}</span>}
           </div>
         </Html>
       </group>

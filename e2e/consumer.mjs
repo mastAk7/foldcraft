@@ -343,11 +343,259 @@ await scenario('K', 'Keyboard only: open My items, open a product, act, close', 
 
 })
 
+// ---------------------------------------------------------------------------------------------
+// Walk mode. Software rendering runs at a few frames per second here, and each frame is capped at
+// 0.1 s of movement, so these check directions and limits rather than exact distances.
+
+const walkPose = (p) => p.evaluate(() => ({ ...window.__foldcraftWalk }))
+const walkPrefs = (p) => p.evaluate(() => JSON.parse(localStorage.getItem('foldcraft:walk') ?? 'null'))
+async function waitFrames(p, n = 3) {
+  const start = (await walkPose(p)).frames
+  await p.waitForFunction((f) => window.__foldcraftWalk.frames >= f, start + n, { timeout: 60_000 })
+}
+async function holdKey(p, key, ms) {
+  await p.keyboard.down(key)
+  await p.waitForTimeout(ms)
+  await p.keyboard.up(key)
+  await waitFrames(p, 2)
+}
+async function enterWalk(p) {
+  await p.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Walk' }).click()
+  await p.getByRole('button', { name: /Leave walk mode/ }).waitFor()
+  await waitFrames(p, 3)
+}
+const walkTo = (p, zone) => p.getByRole('navigation', { name: 'Walk to a zone' }).getByRole('button', { name: new RegExp(`^${zone}`) }).click()
+async function drag(p, dx, dy, steps = 10) {
+  const vp = p.viewportSize()
+  const x = vp.width / 2
+  const y = vp.height / 2
+  await p.mouse.move(x, y)
+  await p.mouse.down()
+  for (let i = 1; i <= steps; i++) await p.mouse.move(x + (dx * i) / steps, y + (dy * i) / steps)
+  await p.mouse.up()
+  await waitFrames(p, 2)
+}
+
+let walker // shared by L–P, like the main page above
+
+await scenario('L', 'Walk mode: the controls card, then W/A/S/D, arrows, touchpad-style drag and swipe all move or turn', async () => {
+  walker = await newPage()
+  contexts.pop() // lives across L–Q; Q closes it
+  await startWorld(walker)
+  await enterWalk(walker)
+  const card = walker.getByRole('region', { name: 'Walk mode controls' })
+  await card.waitFor()
+  for (const t of ['Walk forward, left, back, right', 'Turn left or right', /press and hold on the touchpad, then slide/, /two-finger swipe/, 'Open the highlighted item (or just click it)', /press again to leave walk mode/])
+    assert(await card.getByText(t).isVisible(), `controls card is missing "${t}"`)
+  await shot(walker, 'L-walk-guide')
+  await card.getByRole('button', { name: 'Got it' }).click()
+  await card.waitFor({ state: 'detached' })
+  assert((await walkPrefs(walker))?.guideSeen === true, 'controls card will show again every time')
+
+  let a = await walkPose(walker)
+  assert(a.mode === 'walk' && Math.abs(a.yaw) < 0.01, `walk mode should start facing north, got ${JSON.stringify(a)}`)
+  await holdKey(walker, 'KeyW', 1500)
+  let b = await walkPose(walker)
+  assert(a.z - b.z > 0.5 && Math.abs(b.x - a.x) < 0.2, `W did not walk forward (north): ${a.z.toFixed(2)} → ${b.z.toFixed(2)}`)
+  await holdKey(walker, 'KeyS', 1000)
+  a = await walkPose(walker)
+  assert(a.z > b.z + 0.3, 'S did not walk back')
+  await holdKey(walker, 'KeyD', 1000)
+  b = await walkPose(walker)
+  assert(b.x > a.x + 0.3, 'D did not step right')
+  await holdKey(walker, 'KeyA', 1000)
+  a = await walkPose(walker)
+  assert(a.x < b.x - 0.3, 'A did not step left')
+  await holdKey(walker, 'ArrowUp', 1000)
+  b = await walkPose(walker)
+  assert(b.z < a.z - 0.3, '↑ did not walk forward')
+  await holdKey(walker, 'ArrowLeft', 1200)
+  a = await walkPose(walker)
+  assert(a.yaw > b.yaw + 0.2, '← did not turn left')
+
+  // Look by press-and-drag (what a touchpad click-drag produces), with no movement.
+  await drag(walker, 240, 0)
+  b = await walkPose(walker)
+  assert(b.yaw < a.yaw - 0.4, `dragging right did not look right (${a.yaw.toFixed(2)} → ${b.yaw.toFixed(2)})`)
+  assert(Math.hypot(b.x - a.x, b.z - a.z) < 0.05, 'dragging to look moved the player')
+  // A huge downward drag never flips the view: pitch stays within ±65°.
+  await drag(walker, 0, 3000, 40)
+  b = await walkPose(walker)
+  assert(b.pitch >= -1.135 && b.pitch < -1.0, `pitch not clamped looking down: ${b.pitch}`)
+  await drag(walker, 0, -1500, 25)
+  // Two-finger swipe (wheel) looks around too, and never scrolls the page.
+  a = await walkPose(walker)
+  await walker.mouse.move(walker.viewportSize().width / 2, walker.viewportSize().height / 2)
+  await walker.mouse.wheel(200, 0)
+  await waitFrames(walker, 2)
+  b = await walkPose(walker)
+  assert(b.yaw < a.yaw - 0.15, 'a sideways two-finger swipe did not turn the view')
+  assert((await walker.evaluate(() => window.scrollY + document.scrollingElement.scrollTop)) === 0, 'the page scrolled')
+  await shot(walker, 'L-walking')
+
+  // Leaving and coming back doesn't show the card again.
+  await walker.getByRole('button', { name: /Leave walk mode/ }).click()
+  await enterWalk(walker)
+  assert((await walker.getByRole('region', { name: 'Walk mode controls' }).count()) === 0, 'controls card shown again')
+})
+
+await scenario('M', 'Walk mode stops when the window loses focus, ignores typing and pauses while a panel is open', async () => {
+  await walker.keyboard.down('KeyW')
+  await walker.waitForTimeout(800)
+  await walker.evaluate(() => window.dispatchEvent(new Event('blur')))
+  await waitFrames(walker, 2)
+  const a = await walkPose(walker)
+  await walker.waitForTimeout(1500)
+  await waitFrames(walker, 2)
+  const b = await walkPose(walker)
+  await walker.keyboard.up('KeyW')
+  assert(Math.hypot(b.x - a.x, b.z - a.z) < 0.05, `kept walking after the window lost focus (${a.z.toFixed(2)} → ${b.z.toFixed(2)})`)
+
+  await walker.getByRole('button', { name: 'My items' }).click()
+  const list = dialog(walker, 'My items')
+  await list.waitFor()
+  await waitFrames(walker, 2)
+  const c = await walkPose(walker)
+  assert(c.paused, 'walking is not paused with a panel open')
+  assert(await walker.getByText('Walking is paused while a panel is open').isVisible(), 'no paused notice')
+  await list.getByRole('searchbox').fill('')
+  await list.getByRole('searchbox').pressSequentially('wasd')
+  await walker.keyboard.down('ArrowUp')
+  await walker.waitForTimeout(800)
+  await walker.keyboard.up('ArrowUp')
+  await waitFrames(walker, 2)
+  const d = await walkPose(walker)
+  assert(Math.hypot(d.x - c.x, d.z - c.z) < 0.01 && Math.abs(d.yaw - c.yaw) < 0.001, 'typing in the search box moved the player')
+  assert((await list.getByRole('searchbox').inputValue()) === 'wasd', 'the search box did not get the typing')
+  // Esc closes the panel only; walk mode stays.
+  await walker.keyboard.press('Escape')
+  await list.waitFor({ state: 'detached' })
+  await waitFrames(walker, 2)
+  assert((await walkPose(walker)).mode === 'walk', 'Esc in a panel also left walk mode')
+  assert(await walker.getByRole('button', { name: /Leave walk mode/ }).isVisible(), 'walk HUD gone after closing the panel')
+})
+
+await scenario('N', 'Walk to a zone, open the highlighted item with E or a click, read its details and record an action', async () => {
+  await walkTo(walker, 'Pantry')
+  await walker.getByRole('status').filter({ hasText: 'Pantry · 4 items' }).waitFor()
+  await waitFrames(walker, 4)
+  const at = await walkPose(walker)
+  assert(Math.abs(at.x + 14) < 1 && Math.abs(at.z - 19) < 1.5, `did not arrive at the pantry: ${at.x.toFixed(1)}, ${at.z.toFixed(1)}`)
+  const prompt = walker.getByText(/Press\s*E\s*or click to open/)
+  await prompt.waitFor()
+  const name = (await walker.getByTestId('walk-target').locator('strong').textContent()).trim()
+  await shot(walker, 'N-target')
+  await walker.keyboard.press('KeyE')
+  const p = dialog(walker, name)
+  await p.waitFor()
+  for (const t of ['Where you recorded it', 'Packaging & next life'])
+    assert(await p.getByText(t, { exact: true }).first().isVisible(), `product panel is missing "${t}"`)
+  await p.getByText('Record details & history').click()
+  assert(await p.getByText('Part of the sample world').isVisible(), 'record details not readable from walk mode')
+  const item = (await stored(walker)).items.find((i) => i.record.name === name)
+  await p.getByRole('button', { name: 'Used it up', exact: true }).click()
+  await toast(walker, `${name} used up`).waitFor()
+  assert((await stored(walker)).items.find((i) => i.id === item.id).status === 'finished', 'action from walk mode was not stored')
+  await walker.keyboard.press('Escape')
+  await p.waitFor({ state: 'detached' })
+
+  // A plain click (no drag) on the highlighted item opens it and doesn't move or turn the player.
+  await walkTo(walker, 'Freezer')
+  await waitFrames(walker, 3)
+  await holdKey(walker, 'ArrowLeft', 500) // turn a little toward the peas
+  for (let i = 0; i < 6 && !(await walker.getByText(/Press\s*E\s*or click to open/).count()); i++) await holdKey(walker, 'ArrowLeft', 250)
+  await walker.getByText(/Press\s*E\s*or click to open/).waitFor()
+  const before = await walkPose(walker)
+  const vp = walker.viewportSize()
+  await walker.mouse.click(vp.width / 2, vp.height / 2)
+  await dialog(walker, 'Frozen Garden Peas').waitFor()
+  await waitFrames(walker, 2)
+  const after = await walkPose(walker)
+  assert(Math.hypot(after.x - before.x, after.z - before.z) < 0.01 && Math.abs(after.yaw - before.yaw) < 0.001, 'clicking an item moved the player')
+})
+
+await scenario('O', 'Solid things and the island edge hold: no walking through the freezer vault or off the world', async () => {
+  await walker.keyboard.press('Escape')
+  await dialog(walker, 'Frozen Garden Peas').waitFor({ state: 'detached' })
+  await walkTo(walker, 'Freezer')
+  await waitFrames(walker, 3)
+  await holdKey(walker, 'KeyW', 6000) // straight at the vault behind the pad
+  const a = await walkPose(walker)
+  // The vault's front wall is at z ≈ -15.9; the player (radius 0.35) must stop in front of it.
+  assert(a.z > -15.9 + 0.3, `walked into the freezer vault: z = ${a.z.toFixed(2)}`)
+  assert(a.y >= 2.9, `fell below the pad: y = ${a.y}`)
+  await holdKey(walker, 'ArrowLeft', 2500) // turn to face west, toward the island edge
+  await holdKey(walker, 'KeyW', 9000)
+  const b = await walkPose(walker)
+  assert(b.y >= 1.99, `fell below the ground: y = ${b.y}`)
+  assert(Math.hypot(b.x, b.z) < 35, `left the island: ${b.x.toFixed(1)}, ${b.z.toFixed(1)}`)
+  await shot(walker, 'O-edge')
+})
+
+await scenario('P', 'Esc closes the panel first, then leaves walk mode; switching views keeps the open item and everything works in overview', async () => {
+  await walkTo(walker, 'Pantry')
+  await waitFrames(walker, 4)
+  await walker.getByText(/Press\s*E\s*or click to open/).waitFor()
+  await walker.keyboard.press('KeyE')
+  const panel = walker.getByRole('dialog').filter({ has: walker.getByText('Packaging & next life', { exact: true }) })
+  await panel.waitFor()
+  const title = (await panel.getByRole('heading').first().textContent()).trim()
+  // Switching to Overview with the item open keeps it open.
+  await walker.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Overview' }).click()
+  await walker.getByRole('button', { name: /Leave walk mode/ }).waitFor({ state: 'detached' })
+  assert(await dialog(walker, title).isVisible(), 'the open item closed when switching to overview')
+  assert((await walkPose(walker)).mode === 'overview', 'still in walk mode')
+  // Back to walk with the item open: Esc closes the item first, then leaves walk mode.
+  await enterWalk(walker)
+  await walker.keyboard.press('Escape')
+  await dialog(walker, title).waitFor({ state: 'detached' })
+  await waitFrames(walker, 2)
+  assert((await walkPose(walker)).mode === 'walk', 'first Esc left walk mode instead of closing the panel')
+  await walker.keyboard.press('Escape')
+  await walker.getByRole('button', { name: /Leave walk mode/ }).waitFor({ state: 'detached' })
+  assert(await walker.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Overview' }).getAttribute('aria-pressed') === 'true', 'overview not selected after Esc')
+  // Ordinary overview still works: zone focus, list, product details.
+  await walker.getByRole('button', { name: /^Freezer/ }).click()
+  await walker.getByRole('status').filter({ hasText: 'Freezer · 1 item' }).waitFor()
+  await walker.getByRole('button', { name: 'Whole world' }).first().click()
+  await walker.getByRole('button', { name: 'My items' }).click()
+  await dialog(walker, 'My items').getByRole('searchbox').fill('milk')
+  await dialog(walker, 'My items').getByRole('button', { name: /Whole Milk/ }).click()
+  await dialog(walker, 'Whole Milk').getByText('Packaging & next life', { exact: true }).waitFor()
+  await walker.keyboard.press('Escape')
+  await shot(walker, 'P-overview-again')
+})
+
+await scenario('Q', 'Rendering stays responsive in overview and walk mode (software WebGL, reported only)', async () => {
+  const fps = () =>
+    walker.evaluate(
+      () =>
+        new Promise((res) => {
+          let n = 0
+          const t0 = performance.now()
+          const f = () => {
+            n++
+            if (performance.now() - t0 < 4000) requestAnimationFrame(f)
+            else res(n / ((performance.now() - t0) / 1000))
+          }
+          requestAnimationFrame(f)
+        }),
+    )
+  await walker.waitForTimeout(1000)
+  const overview = await fps()
+  await enterWalk(walker)
+  const walking = await fps()
+  console.log(`      software-WebGL frame rate: overview ${overview.toFixed(1)} fps, walk ${walking.toFixed(1)} fps (a real GPU is far faster)`)
+  assert(overview > 0.5 && walking > 0.5, 'rendering stalled')
+  await walker.getByRole('button', { name: /Leave walk mode/ }).click()
+  await walker.context().close()
+})
+
 await browser.close()
 await new Promise((r) => server.httpServer.close(r))
 
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} scenarios passed.`)
 if (pageErrors.length) console.log(`\nPage errors:\n  ${pageErrors.join('\n  ')}`)
-console.log('\nManual only: live camera scanning (CameraScanner + jsQR), a real phone camera opening a printed code, touchpad/touch gestures in the 3D world.')
+console.log('\nManual only: live camera scanning (CameraScanner + jsQR), a real phone camera opening a printed code, and real touchpad/touch gestures in the 3D world (walk mode is checked here with emulated mouse, wheel and keys; see docs/consumer-journeys.md for the manual touchpad steps).')
 process.exit(failed.length || pageErrors.length ? 1 : 0)

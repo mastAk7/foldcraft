@@ -18,7 +18,10 @@ import { Toasts } from './ui/Toasts'
 import { TopBar } from './ui/TopBar'
 import type { AddMethod } from './domain/types'
 import { useCompact } from './ui/useCompact'
+import { WalkHud } from './ui/WalkHud'
 import { ZoneDock } from './ui/ZoneDock'
+import { mixRgb, rgb, SKY_HIGH, SKY_LOW } from './world/sky'
+import { useWalk } from './world/walk/walkState'
 
 const WorldCanvas = lazy(() => import('./world/WorldCanvas'))
 
@@ -56,9 +59,7 @@ function Loading() {
   )
 }
 
-const SKY_LOW = { top: [185, 222, 240], mid: [220, 239, 244], bottom: [246, 238, 221] }
-const SKY_HIGH = { top: [150, 212, 246], mid: [214, 240, 236], bottom: [255, 232, 196] }
-const mix = (a: number[], b: number[], t: number) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',')})`
+const mix = (a: number[], b: number[], t: number) => rgb(mixRgb(a, b, t))
 
 export default function App() {
   const onboarded = useWorld((s) => s.onboarded)
@@ -81,6 +82,12 @@ export default function App() {
     useWorld.getState().openPanel('add')
   }, [scan, onboarded])
   const showList = listView || !webgl || crashed
+  const walking = useWalk((s) => s.mode === 'walk')
+  // Walk mode only exists in the 3D world: the list view, a missing or crashed renderer, or a
+  // reset back to onboarding all return to the ordinary view.
+  useEffect(() => {
+    if (showList || !onboarded) useWalk.getState().exit()
+  }, [showList, onboarded])
   const sideOpen = !!selected || panel === 'items' || panel === 'coach' || panel === 'buy' || panel === 'activity'
 
   const scanShown = useRef(false)
@@ -133,13 +140,15 @@ export default function App() {
           <TopBar webgl={webgl && !crashed} />
           {/* Top left: the first-use guide while it's running, otherwise the single most useful suggestion. */}
           {guideOpen ? (
-            !(compact && (sideOpen || panel)) && (
+            // On a phone the walk controls take this space; Help brings the guide back afterwards.
+            !(compact && (sideOpen || panel || walking)) && (
               <div className="pointer-events-none absolute left-3 right-3 top-[84px] z-20 sm:right-auto">
                 <GuideCard />
               </div>
             )
           ) : (
-            !compact && (
+            !compact &&
+            !walking && (
               <div className="pointer-events-none absolute left-3 top-[84px] z-20">
                 <CoachPrompt />
               </div>
@@ -150,10 +159,11 @@ export default function App() {
               className="safe-bottom pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-3 transition-[padding]"
               style={{ paddingRight: sideOpen && !compact ? 424 : undefined }}
             >
-              {compact && !showList && !guideOpen && <CoachPrompt compact />}
+              {compact && !showList && !guideOpen && !walking && <CoachPrompt compact />}
               <ZoneDock showZones={!showList} />
             </div>
           )}
+          {walking && !showList && <WalkHud sideOpen={sideOpen} compact={compact} />}
           <Toasts />
         </>
       )}

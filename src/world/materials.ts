@@ -5,8 +5,8 @@ import * as THREE from 'three'
  * an 8x8 "pixel" grain per face, side-face shading and depth darkening for the island underside.
  * No textures are loaded, so it's cheap and fully original.
  */
-export function createVoxelMaterial({ grain = 0.07, seams = true, depthFade = true } = {}) {
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, vertexColors: false })
+export function createVoxelMaterial({ grain = 0.07, seams = true, depthFade = true, vertexColors = false } = {}) {
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, vertexColors })
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace(

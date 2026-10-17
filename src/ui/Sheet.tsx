@@ -49,7 +49,10 @@ export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      // Mark it used, so the same Escape doesn't also leave walk mode.
+      e.preventDefault()
+      onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -119,7 +122,10 @@ export function Modal({
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      // Mark it used, so the same Escape doesn't also leave walk mode.
+      e.preventDefault()
+      onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

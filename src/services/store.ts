@@ -503,15 +503,9 @@ export const useWorld = create<WorldState>()(
           }))
           const none = missing.map((m) => `No ${m} in your world.`).join(' ')
           const fix = missing.length ? ' Add it from Add product → Sample products, or reset the demo world.' : ''
-          get().pushToast(
-            raised.length
-              ? {
-                  tone: 'info',
-                  title: raised.length > 1 ? 'Demo alerts shown' : 'Demo alert shown',
-                  body: `Simulated only: no dates, records or history were changed.${none ? ` ${none}${fix}` : ''}`,
-                }
-              : { tone: 'info', title: 'No demo alert shown', body: `${none}${fix}` },
-          )
+          // The alert cards say they're simulated; a toast is only needed to explain one that couldn't be shown.
+          if (missing.length)
+            get().pushToast({ tone: 'info', title: raised.length ? 'Only some demo alerts shown' : 'No demo alert shown', body: `${none}${fix}` })
           return { raised, missing }
         },
         dismissDemoAlert(id) {

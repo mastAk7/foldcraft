@@ -183,7 +183,8 @@ mouse attached:
 ## Coach chats, the help rail and demo alerts
 
 - **Coach chats.** **Storage Coach** and **Circularity Coach** sit directly under the world name (top left). Each opens
-  a side panel (a bottom sheet on a phone) with preset questions as buttons. Answers are built by fixed rules in
+  a narrower panel on the left, just below those buttons (a bottom sheet on a phone), so the world, the help rail and
+  any alerts on the right stay in view. Questions are preset buttons. Answers are built by fixed rules in
   `src/domain/coachChat.ts`. They use only the chosen product's record (label wording, dates, packaging parts and
   their listed routes) and what you've recorded (location, status). They are not a free-text AI. When the record lacks
   something, the answer says so ("Not in the record") and never invents a temperature, date or recycling route.
@@ -194,8 +195,10 @@ mouse attached:
   there isn't room for both, so it steps aside until the panel closes. It stops above the bottom dock and scrolls if
   it's full. Toasts move left of it (and below the header) when they would otherwise overlap it. On a phone it spans
   the width under the header, as before.
-- **Simulate demo alerts.** For presentations, from the dock or **Menu**. Choose milk, fruit or both. Each alert names
-  the real item and its real record date, and offers **View details**, **Ask Storage Coach** (opens on that item's dates)
+- **Simulate demo warning.** For presentations. The **Simulate demo warning** button at the top right shows the milk
+  and fruit warnings in one click, e.g. "Your milk on the kitchen counter is going off today, so use it up." (the
+  location is where you recorded it). **Menu → Simulate demo alerts** picks milk or fruit alone, and is the way in on
+  a phone. "Today" is the simulation: each alert also gives the item's real date from its record. It offers **View details**, **Ask Storage Coach** (opens on that item's dates)
   and, for fruit, **Packaging info**. Alerts are UI state only. They aren't saved, never change items, records or
   events, and don't count towards progress. Simulating again replaces the alert, and dismissing one leaves the other.
   If there's no milk or fruit in the world, the option says so instead of inventing one. The sample world now includes

@@ -13,7 +13,7 @@ export function TopBar({ webgl }: { webgl: boolean }) {
   const items = useWorld((s) => s.items)
   const listView = useWorld((s) => s.listView)
   const chatOpen = useWorld((s) => (s.panel === 'chat' ? s.coachChat.kind : null))
-  const { openPanel, setListView, resetDemo, restartGuide, openCoachChat, closeCoachChat } = useWorld.getState()
+  const { openPanel, setListView, resetDemo, restartGuide, openCoachChat, closeCoachChat, simulateDemoAlerts } = useWorld.getState()
   const v = useMemo(() => vitality(events), [events])
   const todo = useMemo(() => visibleTasks(items).length, [items])
   const [menu, setMenu] = useState(false)
@@ -81,6 +81,18 @@ export function TopBar({ webgl }: { webgl: boolean }) {
       </div>
 
       <div className="pointer-events-auto flex items-center gap-1.5">
+        {/* One click shows the simulated warnings just below, in the help rail. Menu offers milk or fruit alone,
+            and is the way in on a phone, where this button would crowd out the world name. */}
+        <button
+          type="button"
+          className="btn panel h-11 !rounded-xl px-3 max-sm:hidden"
+          onClick={() => simulateDemoAlerts('both')}
+          aria-label="Simulate demo warning"
+          title="Show a simulated expiry warning for a demo. Changes no data."
+        >
+          <BellRing size={18} className="text-[#e08e0b]" aria-hidden />
+          <span className="text-sm font-semibold max-lg:hidden">Simulate demo warning</span>
+        </button>
         <button type="button" className="btn panel relative h-11 !rounded-xl px-3" onClick={() => openPanel('coach')} aria-label={`To do: ${todo} suggestion${todo === 1 ? '' : 's'}`}>
           <ListChecks size={18} aria-hidden />
           <span className="text-sm font-semibold">To do</span>

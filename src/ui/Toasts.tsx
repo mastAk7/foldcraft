@@ -15,12 +15,13 @@ const LIFETIME = { plain: 5200, action: 9000 }
 
 /**
  * `avoidRight`: px kept clear on the right (the help rail), so confirmations never cover it.
+ * `avoidLeft`: px kept clear on the left (an open coach chat).
  * `belowHeader`: start under the world name and its coach buttons instead of beside them.
  */
-export function Toasts({ avoidRight, belowHeader }: { avoidRight?: number; belowHeader?: boolean }) {
+export function Toasts({ avoidRight, avoidLeft, belowHeader }: { avoidRight?: number; avoidLeft?: number; belowHeader?: boolean }) {
   const toasts = useWorld((s) => s.toasts)
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-[78px] z-[60] flex flex-col items-center gap-2 px-3" style={{ paddingRight: avoidRight, top: belowHeader ? 124 : undefined }}>
+    <div className="pointer-events-none absolute inset-x-0 top-[78px] z-[60] flex flex-col items-center gap-2 px-3" style={{ paddingRight: avoidRight, paddingLeft: avoidLeft, top: belowHeader ? 124 : undefined }}>
       {/* The save warning heads the stack so confirmations never cover it. */}
       <SaveBanner />
       <div className="flex w-full flex-col items-center gap-2" aria-live="polite" role="status">

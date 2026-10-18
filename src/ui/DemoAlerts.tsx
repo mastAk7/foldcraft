@@ -1,26 +1,33 @@
 import { BellRing, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { DATE_KIND_LABEL, daysBetween, formatDate, isoDate, relativeDays } from '../domain/dates'
+import { daysBetween, formatDate, isoDate, relativeDays } from '../domain/dates'
 import type { DemoAlert } from '../domain/demoAlerts'
 import type { ConsumerItem } from '../domain/types'
 import { useWorld } from '../services/store'
 
 const AMBER = '#e08e0b'
 
-/** What the alert says, from the item's own printed date. Nothing here changes the item. */
+const DATE_WORD = { use_by: 'use-by', best_before: 'best-before', expiry: 'expiry', manufactured: 'manufactured' } as const
+
+const WHERE: Record<ConsumerItem['actual'], string> = {
+  refrigerator: ' in the refrigerator',
+  freezer: ' in the freezer',
+  pantry: ' in the pantry',
+  counter: ' on the kitchen counter',
+  unconfirmed: '',
+}
+
+/**
+ * What the alert says. The scenario pretends the item goes off today; the body gives the real date from its
+ * record, so the demo never misstates it. Nothing here changes the item.
+ */
 export function alertCopy(a: DemoAlert, item: ConsumerItem, today = isoDate()) {
   const noun = a.scenario === 'milk' ? 'milk' : 'fruit'
-  const kind = a.date?.kind
-  const dateWord = kind === 'use_by' ? 'use-by' : kind === 'expiry' ? 'expiry' : kind === 'best_before' ? 'best-before' : 'expiry'
-  const title = `Your ${noun} is approaching its ${dateWord} date.`
-  const when = a.date
-    ? `${DATE_KIND_LABEL[a.date.kind]} on its record: ${formatDate(a.date.date)} (${relativeDays(daysBetween(today, a.date.date))}).`
-    : 'Its record has no printed date, so none is shown.'
-  const advice =
-    kind === 'use_by' || kind === 'expiry'
-      ? 'Plan to use it before that date and don’t eat it after it.'
-      : 'Plan to use it soon, and check it before eating.'
-  return { title, body: `${item.record.name}. ${when} ${advice}` }
+  const title = `Your ${noun}${WHERE[item.actual]} is going off today, so use it up.`
+  const real = a.date
+    ? `real ${DATE_WORD[a.date.kind]} date ${formatDate(a.date.date)} (${relativeDays(daysBetween(today, a.date.date))})`
+    : 'no printed date on its record'
+  return { title, body: `${item.record.name} · ${real}` }
 }
 
 /** Simulated expiry alerts for demonstrations, each with working follow-ups. */
@@ -59,11 +66,10 @@ export function DemoAlerts() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="eyebrow" style={{ color: AMBER }}>
-                    Demo alert · simulated
+                    Simulated · nothing changed
                   </div>
                   <p className="mt-0.5 text-[14px] font-semibold leading-snug">{copy.title}</p>
                   <p className="mt-0.5 text-[12.5px] leading-snug text-ink-2">{copy.body}</p>
-                  <p className="mt-1 text-[11.5px] leading-snug text-ink-3">Simulated for this demo: nothing about this item has changed.</p>
                 </div>
                 <button
                   type="button"
@@ -74,7 +80,7 @@ export function DemoAlerts() {
                   <X size={15} />
                 </button>
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5 pl-[42px]">
+              <div className="mt-1.5 flex flex-wrap gap-1.5 pl-[42px]">
                 <button type="button" className="btn btn-sm" onClick={() => select(item.id)}>
                   View details
                 </button>

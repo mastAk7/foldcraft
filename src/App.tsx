@@ -17,7 +17,7 @@ import { ItemsPanel } from './ui/ItemsPanel'
 import { ListView } from './ui/ListView'
 import { Onboarding } from './ui/Onboarding'
 import { ProductPanel } from './ui/ProductPanel'
-import { sheetWidth } from './ui/Sheet'
+import { LEFT_SHEET, sheetWidth } from './ui/Sheet'
 import { Toasts } from './ui/Toasts'
 import { TopBar } from './ui/TopBar'
 import type { AddMethod } from './domain/types'
@@ -66,6 +66,15 @@ function Loading() {
 
 const mix = (a: number[], b: number[], t: number) => rgb(mixRgb(a, b, t))
 
+/** A touchpad pinch arrives as ctrl+wheel; over overlay cards it would zoom the whole page. */
+const blockPinch = (e: WheelEvent) => {
+  if (e.ctrlKey) e.preventDefault()
+}
+function noPinchZoom(el: HTMLElement | null) {
+  // React's onWheel is passive and can't cancel, so listen directly. The listener is idempotent per element.
+  el?.addEventListener('wheel', blockPinch, { passive: false })
+}
+
 export default function App() {
   const onboarded = useWorld((s) => s.onboarded)
   const listView = useWorld((s) => s.listView)
@@ -94,7 +103,9 @@ export default function App() {
   useEffect(() => {
     if (showList || !onboarded) useWalk.getState().exit()
   }, [showList, onboarded])
-  const sideOpen = !!selected || panel === 'items' || panel === 'coach' || panel === 'chat' || panel === 'buy' || panel === 'activity'
+  const sideOpen = !!selected || panel === 'items' || panel === 'coach' || panel === 'buy' || panel === 'activity'
+  // The coach chats open on the left, under their buttons, so the world, help rail and alerts stay in view.
+  const chatLeft = !compact && !selected && panel === 'chat'
   const walkGuideOpen = useWalk((s) => s.guideOpen)
   const touch = useCoarsePointer()
 
@@ -167,7 +178,10 @@ export default function App() {
           {/* Far right: the first-use guide while it's running, otherwise the single most useful suggestion. */}
           {!railHidden && (
             <div
-              className={`scroll-thin pointer-events-none absolute z-20 flex flex-col items-end gap-2 overflow-y-auto p-2 ${compact ? 'inset-x-1 top-[116px] max-h-[calc(100%-116px-190px)]' : ''}`}
+              ref={noPinchZoom}
+              // It takes the wheel itself (scrolling its own cards, never zooming the world behind) and a
+              // touchpad pinch over it doesn't zoom the page.
+              className={`scroll-thin pointer-events-auto absolute z-20 flex flex-col items-end gap-2 overflow-y-auto overscroll-contain p-2 ${compact ? 'inset-x-1 top-[116px] max-h-[calc(100%-116px-190px)]' : ''}`}
               // Stops above the bottom dock and scrolls if the guide and alerts don't all fit. The 8 px
               // padding (offset outside) keeps card shadows from being clipped by the scroll box.
               style={
@@ -180,19 +194,20 @@ export default function App() {
               }
               data-testid="help-rail"
             >
+              {/* Alerts first, just below the top-right button that raises them. On a phone a panel covers
+                  most of the screen, so they wait until it closes. */}
+              {!(compact && (sideOpen || panel)) && <DemoAlerts />}
               {guideOpen
                 ? // On a phone the walk controls take this space; Help brings the guide back afterwards.
                   !(compact && (sideOpen || panel || walking)) && <GuideCard />
                 : !compact && !walking && <CoachPrompt />}
               <AnimatePresence>{walking && !showList && !compact && walkGuideOpen && <WalkGuide key="walk-guide" touch={touch} />}</AnimatePresence>
-              {/* On a phone a panel covers most of the screen, so alerts wait until it closes. */}
-              {!(compact && (sideOpen || panel)) && <DemoAlerts />}
             </div>
           )}
           {!(compact && (sideOpen || panel)) && (
             <div
               className="safe-bottom pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-3 transition-[padding]"
-              style={{ paddingRight: sideOpen && !compact ? 424 : undefined }}
+              style={{ paddingRight: sideOpen && !compact ? 424 : undefined, paddingLeft: chatLeft ? LEFT_SHEET.width + 24 : undefined }}
             >
               {compact && !showList && !guideOpen && !walking && <CoachPrompt compact />}
               <ZoneDock showZones={!showList} />
@@ -200,7 +215,11 @@ export default function App() {
           )}
           {walking && !showList && <WalkHud sideOpen={sideOpen} compact={compact} />}
           {/* Moved left of the rail, or on a phone, toasts would sit on the coach buttons: start them below the header. */}
-          <Toasts avoidRight={toastsAside ? railStyle.right + RAIL_WIDTH + 12 : undefined} belowHeader={compact || toastsAside} />
+          <Toasts
+            avoidRight={toastsAside ? railStyle.right + RAIL_WIDTH + 12 : undefined}
+            avoidLeft={chatLeft ? LEFT_SHEET.width + 24 : undefined}
+            belowHeader={compact || toastsAside}
+          />
         </>
       )}
 

@@ -212,7 +212,7 @@ describe('simulated demo alerts', () => {
     expect(byRecord('whole-milk-1l').record.dates).toEqual(milkDates)
     const saved = JSON.parse(ls.data.get('foldcraft:world') ?? '{"state":{}}').state
     expect(saved.demoAlerts).toBeUndefined()
-    expect(lastToast().body).toMatch(/Simulated only/)
+    expect(state().toasts).toEqual([])
   })
 
   it('dismissing one leaves the other; dismiss all clears them; a reset clears them too', () => {

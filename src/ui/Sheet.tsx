@@ -39,13 +39,17 @@ interface SheetProps {
   wide?: boolean
   /** A "Back to …" link above the title, for panels opened from another panel. */
   back?: { label: string; onClick: () => void }
+  /** `left`: a narrower panel under the top-left header (the coach chats), so the world and help rail stay visible. */
+  side?: 'left' | 'right'
 }
 
 /** Width of the desktop side panel, so things beside it (the help rail) can keep clear of it. */
 export const sheetWidth = (wide?: boolean) => (wide ? 460 : 400)
+/** The left panel: its width, and its top, just below the world name and coach buttons. */
+export const LEFT_SHEET = { width: 360, top: 124 }
 
 /** Side panel on desktop, bottom sheet on mobile. Non-modal so the world stays explorable. */
-export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent = '#2f6b4f', wide, back }: SheetProps) {
+export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent = '#2f6b4f', wide, back, side = 'right' }: SheetProps) {
   const compact = useCompact()
   const id = useId()
   const ref = useRef<HTMLDivElement>(null)
@@ -64,7 +68,7 @@ export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent 
 
   const motionProps = compact
     ? { initial: { y: '100%' }, animate: { y: 0 }, exit: { y: '100%' } }
-    : { initial: { x: 40, opacity: 0 }, animate: { x: 0, opacity: 1 }, exit: { x: 40, opacity: 0 } }
+    : { initial: { x: side === 'left' ? -40 : 40, opacity: 0 }, animate: { x: 0, opacity: 1 }, exit: { x: side === 'left' ? -40 : 40, opacity: 0 } }
 
   return (
     <motion.section
@@ -75,9 +79,14 @@ export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent 
       className={
         compact
           ? 'panel panel-solid fixed inset-x-0 bottom-0 z-40 flex max-h-[80dvh] flex-col rounded-b-none'
-          : 'panel absolute bottom-3 right-3 top-[76px] z-40 flex flex-col'
+          : side === 'left'
+            ? 'panel absolute bottom-3 left-3 z-40 flex flex-col'
+            : 'panel absolute bottom-3 right-3 top-[76px] z-40 flex flex-col'
       }
-      style={{ borderTop: `4px solid ${accent}`, width: compact ? undefined : sheetWidth(wide) }}
+      style={{
+        borderTop: `4px solid ${accent}`,
+        ...(compact ? {} : side === 'left' ? { width: LEFT_SHEET.width, top: LEFT_SHEET.top } : { width: sheetWidth(wide) }),
+      }}
     >
       {compact && <div className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-black/15" aria-hidden />}
       {back && (

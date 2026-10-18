@@ -37,14 +37,20 @@ export function CoachChat() {
     [items, kind, chat.itemId],
   )
 
-  // Bring each new question to the top of the log, so its answer reads from the start.
+  // Bring each new question to the top of the log, so its answer reads from the start. Only the panel's
+  // own scroll box moves: scrollIntoView would also scroll the page behind it.
   useEffect(() => {
+    const el = latest.current
+    const box = el?.closest<HTMLElement>('.overflow-y-auto')
+    if (!el || !box) return
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    latest.current?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
+    const top = box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - 8
+    box.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' })
   }, [log.length])
 
   return (
     <Sheet
+      side="left"
       onClose={closeCoachChat}
       accent={m.accent}
       eyebrow="Preset questions · answers from the product record"

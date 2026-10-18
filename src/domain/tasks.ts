@@ -13,7 +13,7 @@ import type { ConsumerItem, Task } from './types'
 
 const DATE_WINDOW_DAYS = 3
 
-function sourceLabel(item: ConsumerItem): string {
+export function sourceLabel(item: ConsumerItem): string {
   switch (item.record.source) {
     case 'producer':
       return 'Producer record'

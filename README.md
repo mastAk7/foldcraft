@@ -44,7 +44,7 @@ npm run dev:host     # dev server reachable from other devices on your network
 0. **Landing (`/`):** scroll to descend: through the cloud sea, over the mountain pass and plains, past the cliff edge into
    the cut-away strata, a cave where the FoldCraft parcel unfolds into a planter, the lava gallery, and down the waterfall
    to the island, which blooms as you arrive. **Enter Your World** opens `/world`. Scroll back up to reverse the journey.
-1. **Onboarding:** one welcome card, then **Start with sample products** (seeds 9 sample products, each marked “Sample”).
+1. **Onboarding:** one welcome card, then **Start with sample products** (seeds 10 sample products, each marked “Sample”).
    A small **Getting started** card ticks off three steps as you do them (open a product, do its next step, return to
    the world). **Help** brings it back.
 2. **Explore:** the bottom bar has the three main actions: **My items** (search and filter everything you've recorded),

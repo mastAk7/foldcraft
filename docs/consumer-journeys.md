@@ -179,3 +179,26 @@ mouse attached:
 7. Open **My items**, type "wasd" in the search box: you don't move. **Esc** closes the panel; **Esc** again leaves walk
    mode and returns to the same overview you left.
 8. **Settings**: move the look-speed slider and check that touchpad look gets faster or slower to match.
+
+## Coach chats, the help rail and demo alerts
+
+- **Coach chats.** **Storage Coach** and **Circularity Coach** sit directly under the world name (top left). Each opens
+  a side panel (a bottom sheet on a phone) with preset questions as buttons. Answers are built by fixed rules in
+  `src/domain/coachChat.ts`. They use only the chosen product's record (label wording, dates, packaging parts and
+  their listed routes) and what you've recorded (location, status). They are not a free-text AI. When the record lacks
+  something, the answer says so ("Not in the record") and never invents a temperature, date or recycling route.
+  Recycling answers always add the local-collection caveat. Opened from a product, the chat is about that product, and
+  closing it returns to the product. Each coach keeps its own conversation until the demo world is reset.
+- **Help rail.** The getting-started guide, the single coach suggestion, the walk controls card and demo alerts share
+  one column on the far right. Beside an open side panel the column moves to the panel's left. Below about 1180 px
+  there isn't room for both, so it steps aside until the panel closes. It stops above the bottom dock and scrolls if
+  it's full. Toasts move left of it (and below the header) when they would otherwise overlap it. On a phone it spans
+  the width under the header, as before.
+- **Simulate demo alerts.** For presentations, from the dock or **Menu**. Choose milk, fruit or both. Each alert names
+  the real item and its real record date, and offers **View details**, **Ask Storage Coach** (opens on that item's dates)
+  and, for fruit, **Packaging info**. Alerts are UI state only. They aren't saved, never change items, records or
+  events, and don't count towards progress. Simulating again replaces the alert, and dismissing one leaves the other.
+  If there's no milk or fruit in the world, the option says so instead of inventing one. The sample world now includes
+  **Strawberries** (Fresh produce) for the fruit alert.
+- **Tested by** `src/domain/coachChat.test.ts`, the "coach chats" and "simulated demo alerts" blocks in
+  `src/services/consumer.test.ts`, and browser scenarios R (1280 and 1024 px) and S (390 px phone).

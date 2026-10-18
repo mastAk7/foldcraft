@@ -27,7 +27,8 @@ beforeEach(() => {
   ls = fakeStorage()
   g.window = { localStorage: ls.storage }
   const { items, events } = buildDemoWorld()
-  useWorld.setState({ items, events, onboarded: true, guide: { ...NEW_GUIDE }, undo: null, toasts: [], selectedId: null, selectedFrom: null, panel: null, saveError: null })
+  useWorld.setState({ items, events, onboarded: true, guide: { ...NEW_GUIDE }, undo: null, toasts: [], selectedId: null, selectedFrom: null, panel: null, saveError: null,
+    coachChat: { kind: 'storage', itemId: null, returnTo: null, logs: { storage: [], circularity: [] } }, demoAlerts: [] })
 })
 afterEach(() => {
   delete g.window
@@ -162,5 +163,88 @@ describe('sample products', () => {
     state().loadSamples()
     expect(state().items.length).toBe(n)
     expect(state().items.every((i) => i.addedVia === 'demo_seed')).toBe(true)
+  })
+})
+
+describe('coach chats', () => {
+  it('opening from a product uses it as context, keeps a conversation, and closing returns to it', () => {
+    const milk = byRecord('whole-milk-1l')
+    state().select(milk.id, 'items')
+    state().openCoachChat('storage')
+    expect(state()).toMatchObject({ panel: 'chat', selectedId: null, coachChat: { kind: 'storage', itemId: milk.id } })
+    state().askCoach('where')
+    state().askCoach('temperature')
+    expect(state().coachChat.logs.storage.map((e) => e.q)).toEqual(['where', 'temperature'])
+    // The other coach has its own conversation.
+    state().openCoachChat('circularity')
+    expect(state().coachChat.logs.circularity).toEqual([])
+    state().closeCoachChat()
+    expect(state()).toMatchObject({ panel: null, selectedId: milk.id, selectedFrom: 'items' })
+  })
+
+  it('opened with a starter question adds it once, however often it is opened', () => {
+    const milk = byRecord('whole-milk-1l')
+    state().openCoachChat('storage', milk.id, 'expiring')
+    state().openCoachChat('storage', milk.id, 'expiring')
+    expect(state().coachChat.logs.storage.map((e) => e.q)).toEqual(['expiring'])
+  })
+})
+
+describe('simulated demo alerts', () => {
+  const persisted = () => JSON.parse(JSON.stringify({ items: state().items, events: state().events, guide: state().guide }))
+
+  it('raise milk and fruit side by side, replace on repeat, and change no saved data', () => {
+    const before = persisted()
+    const milkDates = structuredClone(byRecord('whole-milk-1l').record.dates)
+    expect(state().simulateDemoAlerts('both')).toEqual({ raised: ['milk', 'fruit'], missing: [] })
+    const first = state().demoAlerts
+    expect(first.map((a) => a.scenario)).toEqual(['milk', 'fruit'])
+    expect(first[0].itemId).toBe(byRecord('whole-milk-1l').id)
+    expect(first[1].itemId).toBe(byRecord('strawberries-punnet-400g').id)
+    expect(first[0].date).toEqual(milkDates[0])
+
+    state().simulateDemoAlerts('both')
+    state().simulateDemoAlerts('milk')
+    expect(state().demoAlerts.map((a) => a.scenario)).toEqual(['milk', 'fruit'])
+    expect(state().demoAlerts.some((a) => first.some((f) => f.id === a.id && a.scenario === 'milk'))).toBe(false)
+
+    expect(persisted()).toEqual(before)
+    expect(byRecord('whole-milk-1l').record.dates).toEqual(milkDates)
+    const saved = JSON.parse(ls.data.get('foldcraft:world') ?? '{"state":{}}').state
+    expect(saved.demoAlerts).toBeUndefined()
+    expect(lastToast().body).toMatch(/Simulated only/)
+  })
+
+  it('dismissing one leaves the other; dismiss all clears them; a reset clears them too', () => {
+    state().simulateDemoAlerts('both')
+    const [milk, fruit] = state().demoAlerts
+    state().dismissDemoAlert(milk.id)
+    expect(state().demoAlerts).toEqual([fruit])
+    state().simulateDemoAlerts('milk')
+    state().dismissDemoAlert('all')
+    expect(state().demoAlerts).toEqual([])
+    state().simulateDemoAlerts('both')
+    state().resetDemo()
+    expect(state().demoAlerts).toEqual([])
+  })
+
+  it('follow-ups: details open the product and the coach opens about it', () => {
+    state().simulateDemoAlerts('fruit')
+    const alert = state().demoAlerts[0]
+    state().select(alert.itemId)
+    expect(state().selectedId).toBe(alert.itemId)
+    state().openCoachChat('circularity', alert.itemId, 'recycle')
+    expect(state().coachChat).toMatchObject({ kind: 'circularity', itemId: alert.itemId })
+    state().closeCoachChat()
+    expect(state().selectedId).toBe(alert.itemId)
+  })
+
+  it('reports a missing product instead of inventing one', () => {
+    useWorld.setState({ items: state().items.filter((i) => i.record.category !== 'Fresh produce') })
+    expect(state().simulateDemoAlerts('both')).toEqual({ raised: ['milk'], missing: ['fruit'] })
+    expect(lastToast().body).toMatch(/No fruit in your world/)
+    expect(state().simulateDemoAlerts('fruit').raised).toEqual([])
+    // The fruit run also removes any stale fruit alert, and leaves milk alone.
+    expect(state().demoAlerts.map((a) => a.scenario)).toEqual(['milk'])
   })
 })

@@ -24,6 +24,7 @@ const STATUS_STEPS = [
 const BACK_LABEL: Partial<Record<Exclude<PanelId, null>, string>> = {
   items: 'Back to My items',
   coach: 'Back to To do',
+  chat: 'Back to coach',
   buy: 'Back to Before you buy',
 }
 

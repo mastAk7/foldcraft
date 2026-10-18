@@ -11,7 +11,7 @@ import { WalkGuide } from './WalkGuide'
 import { ZoneIcon } from './ZoneIcon'
 
 const COARSE = '(pointer: coarse)'
-function useCoarsePointer() {
+export function useCoarsePointer() {
   return useSyncExternalStore(
     (cb) => {
       const mq = window.matchMedia(COARSE)
@@ -225,7 +225,8 @@ export function WalkHud({ sideOpen, compact }: { sideOpen: boolean; compact: boo
           </div>
         )}
         <AnimatePresence>
-          {guideOpen && <WalkGuide key="guide" touch={touch} />}
+          {/* On wider screens the controls card sits in the help rail on the right (see App). */}
+          {guideOpen && compact && <WalkGuide key="guide" touch={touch} />}
         </AnimatePresence>
         {settingsOpen && <Settings />}
       </div>

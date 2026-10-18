@@ -6,19 +6,24 @@ import { About } from './ui/About'
 import { ActivityLog } from './ui/ActivityLog'
 import { AddProductFlow } from './ui/add/AddProductFlow'
 import { BeforeYouBuy } from './ui/BeforeYouBuy'
+import { CoachChat } from './ui/CoachChat'
 import { CoachPanel } from './ui/CoachPanel'
 import { CoachPrompt } from './ui/CoachPrompt'
+import { DemoAlerts } from './ui/DemoAlerts'
+import { DemoAlertsDialog } from './ui/DemoAlertsDialog'
 import { DemoQrSheet } from './ui/DemoQrSheet'
 import { GuideCard } from './ui/GuideCard'
 import { ItemsPanel } from './ui/ItemsPanel'
 import { ListView } from './ui/ListView'
 import { Onboarding } from './ui/Onboarding'
 import { ProductPanel } from './ui/ProductPanel'
+import { sheetWidth } from './ui/Sheet'
 import { Toasts } from './ui/Toasts'
 import { TopBar } from './ui/TopBar'
 import type { AddMethod } from './domain/types'
-import { useCompact } from './ui/useCompact'
-import { WalkHud } from './ui/WalkHud'
+import { useCompact, useMinWidth } from './ui/useCompact'
+import { useCoarsePointer, WalkHud } from './ui/WalkHud'
+import { WalkGuide } from './ui/WalkGuide'
 import { ZoneDock } from './ui/ZoneDock'
 import { mixRgb, rgb, SKY_HIGH, SKY_LOW } from './world/sky'
 import { useWalk } from './world/walk/walkState'
@@ -69,6 +74,7 @@ export default function App() {
   const selected = useWorld(selectItem(selectedId))
   const events = useWorld((s) => s.events)
   const guideOpen = useWorld((s) => !s.guide.dismissed)
+  const chatKind = useWorld((s) => s.coachChat.kind)
   const compact = useCompact()
   const webgl = useMemo(detectWebGL, [])
   const [crashed, setCrashed] = useState(false)
@@ -88,7 +94,27 @@ export default function App() {
   useEffect(() => {
     if (showList || !onboarded) useWalk.getState().exit()
   }, [showList, onboarded])
-  const sideOpen = !!selected || panel === 'items' || panel === 'coach' || panel === 'buy' || panel === 'activity'
+  const sideOpen = !!selected || panel === 'items' || panel === 'coach' || panel === 'chat' || panel === 'buy' || panel === 'activity'
+  const walkGuideOpen = useWalk((s) => s.guideOpen)
+  const touch = useCoarsePointer()
+
+  // The help rail (guide, coach suggestion, walk controls, demo alerts) sits on the far right. Beside an
+  // open side panel it moves to the panel's left, or steps aside when there isn't room for both; while
+  // walking it drops below the centred walk controls when they would otherwise meet.
+  // Beside a panel the rail needs room for itself and the toasts to its left.
+  const roomBesidePanel = useMinWidth(1180)
+  const toastsClearOfRail = useMinWidth(1230)
+  const roomBesideWalk = useMinWidth(1260)
+  const railHidden = !compact && sideOpen && !roomBesidePanel
+  // The walk controls card is the widest thing the rail holds.
+  const RAIL_WIDTH = walking && walkGuideOpen ? 440 : 380
+  const railStyle = compact
+    ? undefined
+    : {
+        right: sideOpen ? 24 + sheetWidth(!selected && panel === 'coach') : 12,
+        top: walking && !showList && (sideOpen || !roomBesideWalk) ? 236 : 72,
+      }
+  const toastsAside = !!railStyle && !railHidden && (sideOpen || !toastsClearOfRail)
 
   const scanShown = useRef(false)
   useEffect(() => {
@@ -138,21 +164,30 @@ export default function App() {
       {onboarded && (
         <>
           <TopBar webgl={webgl && !crashed} />
-          {/* Top left: the first-use guide while it's running, otherwise the single most useful suggestion. */}
-          {guideOpen ? (
-            // On a phone the walk controls take this space; Help brings the guide back afterwards.
-            !(compact && (sideOpen || panel || walking)) && (
-              <div className="pointer-events-none absolute left-3 right-3 top-[84px] z-20 sm:right-auto">
-                <GuideCard />
-              </div>
-            )
-          ) : (
-            !compact &&
-            !walking && (
-              <div className="pointer-events-none absolute left-3 top-[84px] z-20">
-                <CoachPrompt />
-              </div>
-            )
+          {/* Far right: the first-use guide while it's running, otherwise the single most useful suggestion. */}
+          {!railHidden && (
+            <div
+              className={`scroll-thin pointer-events-none absolute z-20 flex flex-col items-end gap-2 overflow-y-auto p-2 ${compact ? 'inset-x-1 top-[116px] max-h-[calc(100%-116px-190px)]' : ''}`}
+              // Stops above the bottom dock and scrolls if the guide and alerts don't all fit. The 8 px
+              // padding (offset outside) keeps card shadows from being clipped by the scroll box.
+              style={
+                railStyle && {
+                  right: railStyle.right - 8,
+                  top: railStyle.top - 8,
+                  width: RAIL_WIDTH + 16,
+                  maxHeight: `calc(100% - ${railStyle.top - 8}px - 190px)`,
+                }
+              }
+              data-testid="help-rail"
+            >
+              {guideOpen
+                ? // On a phone the walk controls take this space; Help brings the guide back afterwards.
+                  !(compact && (sideOpen || panel || walking)) && <GuideCard />
+                : !compact && !walking && <CoachPrompt />}
+              <AnimatePresence>{walking && !showList && !compact && walkGuideOpen && <WalkGuide key="walk-guide" touch={touch} />}</AnimatePresence>
+              {/* On a phone a panel covers most of the screen, so alerts wait until it closes. */}
+              {!(compact && (sideOpen || panel)) && <DemoAlerts />}
+            </div>
           )}
           {!(compact && (sideOpen || panel)) && (
             <div
@@ -164,7 +199,8 @@ export default function App() {
             </div>
           )}
           {walking && !showList && <WalkHud sideOpen={sideOpen} compact={compact} />}
-          <Toasts />
+          {/* Moved left of the rail, or on a phone, toasts would sit on the coach buttons: start them below the header. */}
+          <Toasts avoidRight={toastsAside ? railStyle.right + RAIL_WIDTH + 12 : undefined} belowHeader={compact || toastsAside} />
         </>
       )}
 
@@ -172,6 +208,7 @@ export default function App() {
         {selected && <ProductPanel key={`p-${selected.id}`} item={selected} />}
         {!selected && panel === 'items' && <ItemsPanel key="items" />}
         {!selected && panel === 'coach' && <CoachPanel key="coach" />}
+        {!selected && panel === 'chat' && <CoachChat key={`chat-${chatKind}`} />}
         {!selected && panel === 'buy' && <BeforeYouBuy key="buy" />}
         {!selected && panel === 'activity' && <ActivityLog key="activity" />}
       </AnimatePresence>
@@ -179,6 +216,7 @@ export default function App() {
         {panel === 'add' && <AddProductFlow key="add" initialPayload={scan ?? undefined} initialVia={scanVia} />}
         {panel === 'qr' && <DemoQrSheet key="qr" />}
         {panel === 'about' && <About key="about" />}
+        {panel === 'demo' && <DemoAlertsDialog key="demo" />}
       </AnimatePresence>
 
       {!onboarded && <Onboarding />}

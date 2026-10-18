@@ -302,6 +302,42 @@ export const CATALOGUE: CatalogueEntry[] = [
     sampleNote: SAMPLE_NOTE,
   },
   {
+    id: 'strawberries-punnet-400g',
+    name: 'Strawberries',
+    brand: 'Greenacre Farm (sample)',
+    category: 'Fresh produce',
+    shape: 'punnet',
+    color: '#e0393e',
+    accent: '#d7ece8',
+    size: '400 g punnet',
+    batch: 'GA-ST-2210',
+    dateOffsets: [{ kind: 'best_before', days: 4 }],
+    storage: {
+      kind: 'refrigerator',
+      text: 'Keep refrigerated at 0–4 °C. Rinse just before eating, not before storing.',
+    },
+    handling: 'Handle gently and keep the pack level. Remove any soft or mouldy berries from the pack.',
+    packaging: [
+      {
+        id: 'punnet',
+        name: 'Punnet',
+        material: 'Recycled PET (rPET), food grade',
+        routes: ['reuse', 'recycle', 'general_waste'],
+        guidance:
+          'PET tray. Many areas collect PET bottles but not trays; check whether your local collection accepts pots, tubs and trays. Separate it from the pad before sorting.',
+        reuseIdea: 'Rinse and reuse for storing small items or as a seed tray.',
+      },
+      {
+        id: 'pad',
+        name: 'Absorbent pad',
+        material: 'Paper fibre with a plastic film backing',
+        routes: ['general_waste'],
+        guidance: 'Mixed-material pads usually can’t be recycled. Put it in general waste unless the pack says otherwise.',
+      },
+    ],
+    sampleNote: SAMPLE_NOTE,
+  },
+  {
     id: 'farmhouse-jam',
     name: 'Farmhouse Jam',
     brand: 'Market stall (sample)',

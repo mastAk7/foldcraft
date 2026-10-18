@@ -13,10 +13,14 @@ const TONE = {
 /** How long a toast stays. One with an Undo stays longer, and none closes while it has the pointer or focus. */
 const LIFETIME = { plain: 5200, action: 9000 }
 
-export function Toasts() {
+/**
+ * `avoidRight`: px kept clear on the right (the help rail), so confirmations never cover it.
+ * `belowHeader`: start under the world name and its coach buttons instead of beside them.
+ */
+export function Toasts({ avoidRight, belowHeader }: { avoidRight?: number; belowHeader?: boolean }) {
   const toasts = useWorld((s) => s.toasts)
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-[78px] z-[60] flex flex-col items-center gap-2 px-3">
+    <div className="pointer-events-none absolute inset-x-0 top-[78px] z-[60] flex flex-col items-center gap-2 px-3" style={{ paddingRight: avoidRight, top: belowHeader ? 124 : undefined }}>
       {/* The save warning heads the stack so confirmations never cover it. */}
       <SaveBanner />
       <div className="flex w-full flex-col items-center gap-2" aria-live="polite" role="status">

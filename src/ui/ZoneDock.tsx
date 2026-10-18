@@ -1,4 +1,4 @@
-import { Footprints, Globe, List, ScanLine, ShoppingBasket, X } from 'lucide-react'
+import { BellRing, Footprints, Globe, List, ScanLine, ShoppingBasket, X } from 'lucide-react'
 import { ZONE_ORDER, ZONES, zoneForItem } from '../domain/storage'
 import { useWorld } from '../services/store'
 import { goToZone, useWalk } from '../world/walk/walkState'
@@ -72,6 +72,14 @@ export function ZoneDock({ showZones }: { showZones: boolean }) {
             )
           })}
         </nav>
+        <button
+          type="button"
+          className="pointer-events-auto flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-xl bg-white/85 px-3 text-[12.5px] font-semibold text-ink-2 shadow-sm backdrop-blur transition hover:bg-white"
+          onClick={() => openPanel('demo')}
+          title="Show simulated milk or fruit expiry warnings for a demo. Changes no data."
+        >
+          <BellRing size={14} className="text-[#e08e0b]" aria-hidden /> Simulate demo alerts
+        </button>
         </div>
       )}
       <div className="pointer-events-auto flex flex-wrap justify-center gap-2">

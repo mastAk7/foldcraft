@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { packagingComponents, ROUTE_INFO } from '../domain/circularity'
 import { addDays, isoDate } from '../domain/dates'
+import { DEMO_SCENARIOS, findDemoTarget, type DemoAlert, type DemoScenario } from '../domain/demoAlerts'
 import { vitality } from '../domain/progression'
 import { isActive, LOCATION_LABEL, storageStatus } from '../domain/storage'
 import type {
@@ -31,7 +32,7 @@ import {
 } from './persistence'
 import { catalogueSource } from './productSource'
 
-export type PanelId = 'items' | 'add' | 'coach' | 'buy' | 'activity' | 'qr' | 'about' | null
+export type PanelId = 'items' | 'add' | 'coach' | 'chat' | 'buy' | 'activity' | 'qr' | 'about' | 'demo' | null
 
 /** Guide steps, in order. Ticked from what the person actually does, never by reading a page. */
 export const GUIDE_STEPS = ['open', 'act', 'back'] as const
@@ -55,6 +56,24 @@ export interface Toast {
   action?: { label: string; run: () => void }
 }
 
+/** One question asked in a coach chat. Answers are recomputed from the live item, never stored. */
+export interface ChatEntry {
+  id: string
+  q: string
+  itemId: string | null
+}
+
+export interface CoachChat {
+  kind: CoachKind
+  /** The product the questions are about. */
+  itemId: string | null
+  /** The product panel that was open when the chat opened, so closing the chat returns to it. */
+  returnTo: { id: string; from: PanelId } | null
+  logs: Record<CoachKind, ChatEntry[]>
+}
+
+const NEW_CHAT: CoachChat = { kind: 'storage', itemId: null, returnTo: null, logs: { storage: [], circularity: [] } }
+
 /** The world just before the most recent change, so that one change can be undone. */
 interface UndoPoint {
   id: string
@@ -75,6 +94,9 @@ interface UiState {
   undo: UndoPoint | null
   /** Set while changes can't be written to this device. */
   saveError: SaveProblem | null
+  coachChat: CoachChat
+  /** Simulated alerts for demonstrations. Never persisted and never written to items or events. */
+  demoAlerts: DemoAlert[]
 }
 
 interface Actions {
@@ -101,6 +123,13 @@ interface Actions {
   select(id: string | null, from?: PanelId): void
   setFocusZone(z: ZoneId | null): void
   openPanel(p: PanelId, coachTab?: CoachKind): void
+  /** `ask` starts the conversation with that question (once; repeating it doesn't add a copy). */
+  openCoachChat(kind: CoachKind, itemId?: string | null, ask?: string): void
+  closeCoachChat(): void
+  setChatItem(itemId: string | null): void
+  askCoach(questionId: string): void
+  simulateDemoAlerts(which: DemoScenario | 'both'): { raised: DemoScenario[]; missing: DemoScenario[] }
+  dismissDemoAlert(id: string | 'all'): void
   setListView(v: boolean): void
   pushToast(t: Omit<Toast, 'id'>): void
   dismissToast(id: string): void
@@ -136,6 +165,7 @@ export function buildDemoWorld(today = isoDate()): Pick<PersistedWorld, 'items' 
     { id: 'frozen-garden-peas', actual: 'freezer', daysAgo: 12 },
     { id: 'whole-milk-1l', actual: 'counter', daysAgo: 0 },
     { id: 'greek-yoghurt-jar', actual: 'refrigerator', daysAgo: 4 },
+    { id: 'strawberries-punnet-400g', actual: 'refrigerator', daysAgo: 1 },
     { id: 'basmati-rice-1kg', actual: 'pantry', daysAgo: 20 },
     { id: 'tomato-ketchup', actual: 'pantry', daysAgo: 25, patch: { status: 'opened', openedAt: ago(9) } },
     { id: 'sourdough-loaf', actual: 'counter', daysAgo: 1 },
@@ -201,10 +231,12 @@ export const useWorld = create<WorldState>()(
         toasts: [],
         undo: null,
         saveError: null,
+        coachChat: NEW_CHAT,
+        demoAlerts: [],
 
         completeOnboarding(name, withDemo) {
           const seed = withDemo ? buildDemoWorld() : { items: [], events: [] }
-          set({ onboarded: true, worldName: name.trim().slice(0, 40) || 'My World', ...seed, guide: { ...NEW_GUIDE }, selectedId: null, panel: null, undo: null })
+          set({ onboarded: true, worldName: name.trim().slice(0, 40) || 'My World', ...seed, guide: { ...NEW_GUIDE }, selectedId: null, panel: null, undo: null, coachChat: NEW_CHAT, demoAlerts: [] })
         },
 
         addItem(record, actual, via, meta = {}) {
@@ -367,7 +399,7 @@ export const useWorld = create<WorldState>()(
         },
 
         resetDemo() {
-          set({ ...buildDemoWorld(), guide: { ...NEW_GUIDE }, onboarded: true, selectedId: null, panel: null, focusZone: null, bursts: [], undo: null })
+          set({ ...buildDemoWorld(), guide: { ...NEW_GUIDE }, onboarded: true, selectedId: null, panel: null, focusZone: null, bursts: [], undo: null, coachChat: NEW_CHAT, demoAlerts: [] })
           get().pushToast({ tone: 'info', title: 'Demo world reset', body: 'Sample products restored. Progress is back to the start.' })
         },
 
@@ -379,7 +411,7 @@ export const useWorld = create<WorldState>()(
         },
 
         clearWorld() {
-          set({ items: [], events: [], selectedId: null, panel: null, focusZone: null, bursts: [], undo: null })
+          set({ items: [], events: [], selectedId: null, panel: null, focusZone: null, bursts: [], undo: null, coachChat: NEW_CHAT, demoAlerts: [] })
         },
 
         guideDone(step) {
@@ -412,6 +444,78 @@ export const useWorld = create<WorldState>()(
         },
         openPanel(p, coachTab) {
           set((s) => ({ panel: p, coachTab: coachTab ?? s.coachTab, selectedId: p ? null : s.selectedId }))
+        },
+        openCoachChat(kind, itemId, ask) {
+          const s = get()
+          const inChat = s.panel === 'chat'
+          const exists = (id: string | null | undefined) => !!id && s.items.some((i) => i.id === id)
+          // About: the item asked for, else the open product, else whatever the chat was last about.
+          const about = itemId !== undefined ? itemId : (s.selectedId ?? (exists(s.coachChat.itemId) ? s.coachChat.itemId : null))
+          set({
+            coachChat: {
+              ...s.coachChat,
+              kind,
+              itemId: exists(about) ? about! : null,
+              returnTo: inChat ? s.coachChat.returnTo : s.selectedId ? { id: s.selectedId, from: s.selectedFrom } : null,
+            },
+            panel: 'chat',
+            selectedId: null,
+          })
+          const c = get().coachChat
+          const last = c.logs[kind].at(-1)
+          if (ask && c.itemId && !(last?.q === ask && last.itemId === c.itemId)) get().askCoach(ask)
+        },
+        closeCoachChat() {
+          const back = get().coachChat.returnTo
+          set((s) => ({ panel: null, coachChat: { ...s.coachChat, returnTo: null } }))
+          if (back && find(back.id)) get().select(back.id, back.from ?? undefined)
+        },
+        setChatItem(itemId) {
+          set((s) => ({ coachChat: { ...s.coachChat, itemId } }))
+        },
+        askCoach(questionId) {
+          set((s) => {
+            const c = s.coachChat
+            const log = [...c.logs[c.kind], { id: uid(), q: questionId, itemId: c.itemId }].slice(-30)
+            return { coachChat: { ...c, logs: { ...c.logs, [c.kind]: log } } }
+          })
+        },
+
+        simulateDemoAlerts(which) {
+          const scenarios = which === 'both' ? DEMO_SCENARIOS : [which]
+          const raised: DemoScenario[] = []
+          const missing: DemoScenario[] = []
+          const fresh: DemoAlert[] = []
+          for (const scenario of scenarios) {
+            const target = findDemoTarget(scenario, get().items)
+            if (!target) {
+              missing.push(scenario)
+              continue
+            }
+            raised.push(scenario)
+            fresh.push({ id: uid(), scenario, itemId: target.item.id, ...(target.date ? { date: target.date } : {}) })
+          }
+          // Re-running a scenario replaces its alert, so a repeat never stacks or leaves a stale copy.
+          set((s) => ({
+            demoAlerts: [...s.demoAlerts.filter((a) => !scenarios.includes(a.scenario)), ...fresh].sort(
+              (a, b) => DEMO_SCENARIOS.indexOf(a.scenario) - DEMO_SCENARIOS.indexOf(b.scenario),
+            ),
+          }))
+          const none = missing.map((m) => `No ${m} in your world.`).join(' ')
+          const fix = missing.length ? ' Add it from Add product → Sample products, or reset the demo world.' : ''
+          get().pushToast(
+            raised.length
+              ? {
+                  tone: 'info',
+                  title: raised.length > 1 ? 'Demo alerts shown' : 'Demo alert shown',
+                  body: `Simulated only: no dates, records or history were changed.${none ? ` ${none}${fix}` : ''}`,
+                }
+              : { tone: 'info', title: 'No demo alert shown', body: `${none}${fix}` },
+          )
+          return { raised, missing }
+        },
+        dismissDemoAlert(id) {
+          set((s) => ({ demoAlerts: id === 'all' ? [] : s.demoAlerts.filter((a) => a.id !== id) }))
         },
         setListView(v) {
           set({ listView: v })

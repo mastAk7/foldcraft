@@ -41,6 +41,9 @@ interface SheetProps {
   back?: { label: string; onClick: () => void }
 }
 
+/** Width of the desktop side panel, so things beside it (the help rail) can keep clear of it. */
+export const sheetWidth = (wide?: boolean) => (wide ? 460 : 400)
+
 /** Side panel on desktop, bottom sheet on mobile. Non-modal so the world stays explorable. */
 export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent = '#2f6b4f', wide, back }: SheetProps) {
   const compact = useCompact()
@@ -72,9 +75,9 @@ export function Sheet({ title, eyebrow, icon, onClose, children, footer, accent 
       className={
         compact
           ? 'panel panel-solid fixed inset-x-0 bottom-0 z-40 flex max-h-[80dvh] flex-col rounded-b-none'
-          : `panel absolute bottom-3 right-3 top-[76px] z-40 flex flex-col ${wide ? 'w-[460px]' : 'w-[400px]'}`
+          : 'panel absolute bottom-3 right-3 top-[76px] z-40 flex flex-col'
       }
-      style={{ borderTop: `4px solid ${accent}` }}
+      style={{ borderTop: `4px solid ${accent}`, width: compact ? undefined : sheetWidth(wide) }}
     >
       {compact && <div className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-black/15" aria-hidden />}
       {back && (
